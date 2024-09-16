@@ -1,0 +1,33 @@
+FROM gnat_base AS base
+# ---------------------------------------------------------------
+#
+# ---------------------------------------------------------------
+WORKDIR /builder
+COPY . .
+
+#
+# pytorch
+#
+ENV LIBTORCH=/base/libtorch
+ENV LIBTORCH_INCLUDE=/base/libtorch
+ENV LIBTORCH_LIB=/base/libtorch
+ENV LD_LIBRARY_PATH=/base/libtorch
+
+#
+# build gnat_flow
+#
+WORKDIR /builder/gnat_flow
+RUN cargo build --release
+
+#
+# build gnat_detect
+#
+WORKDIR /builder/gnat_detect
+RUN cargo build --release
+
+#
+# Update the LD_LIBRARY_PATH
+#
+RUN echo "/opt/gnat/lib" > /etc/ld.so.conf.d/gnat.conf
+RUN echo "/opt/gnat/lib/pytorch" > /etc/ld.so.conf.d/pytorch.conf
+RUN ldconfig

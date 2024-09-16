@@ -1,0 +1,87 @@
+services:
+  gnat_yaf:
+    image: fidelismachine/galileo_toolkit:latest
+    container_name: gnat_yaf
+    restart: unless-stopped      
+    network_mode: host
+    cap_add:
+      - net_admin
+      - net_raw
+      - sys_nice
+    environment:
+      - GNAT_INTERFACE=${GNAT_INTERFACE}
+      - GNAT_OBSERVATION_TAG=${GNAT_OBSERVATION_TAG}  
+      - GNAT_EXPORT_INTERVAL=15
+    volumes:
+      - ./var/spool:/var/spool
+    command: /opt/gnat/scripts/entrypoint-gnat_yaf.sh
+
+  gnat_import:
+    image: fidelismachine/galileo_toolkit:latest
+    container_name: gnat_import
+    restart: unless-stopped   
+    environment:   
+      - GNAT_OBSERVATION_TAG=${GNAT_OBSERVATION_TAG}
+    volumes:
+      - ./var/spool:/var/spool  
+      - ./var/maxmind:/var/maxmind:ro          
+    depends_on:
+      - questdb 
+    command: /opt/gnat/scripts/entrypoint-gnat_import.sh
+    
+  gnat_export:
+    image: fidelismachine/galileo_toolkit:latest
+    container_name: gnat_export
+    restart: unless-stopped   
+    environment:
+      - GNAT_EXPORT_ARCHIVE=/var/spool/export    
+      - GNAT_DB_URI=questdb:9009
+    volumes:
+     - ./var/spool:/var/spool  
+    depends_on:
+      - questdb 
+    command: /opt/gnat/scripts/entrypoint-gnat_export.sh
+
+  gnat_proxy:
+    image: fidelismachine/galileo_proxy:latest
+    container_name: gnat_nginx
+    restart: unless-stopped 
+    volumes:
+      - ./var/log/nginx:/var/log/nginx
+      # uncomment below to enable signed certificates
+      #- ./ssl.crt:/etc/nginx/ssl.crt
+      #- ./ssl.key:/etc/nginx/ssl.key      
+    ports:
+      - 80:80/tcp
+      - 443:443/tcp
+
+  gnat_dashboard:
+    image: fidelismachine/galileo_dashboard:latest
+    restart: unless-stopped    
+    environment:
+      - "TZ=UTC"
+    user: "0:0"
+    volumes:
+      - ./var/grafana:/var/lib/grafana
+
+  questdb:
+    image: questdb/questdb
+    container_name: questdb
+    restart: always
+    ports:
+      - 9000:9000
+    volumes:
+      - ./var/questdb:/root/.questdb
+    environment:
+      - QDB_HTTP_ENABLED=true            # NOTE: set this to true to enable the HTTP interface on port 9000
+      - QDB_LOG_W_STDOUT_LEVEL=ERROR
+      - QDB_LOG_W_FILE_LEVEL=ERROR
+      - QDB_LOG_W_HTTP_MIN_LEVEL=ERROR
+      - QDB_SHARED_WORKER_COUNT=2        # Amount of worker threads
+      - QDB_PG_USER=${GNAT_USERNAME}     # postgresql user -> Configured in .env file
+      - QDB_PG_PASSWORD=${GNAT_PASSWORD} # postgresql password -> Configured in .env file
+      - QDB_TELEMETRY_ENABLED=false      # Disable telemetry
+      - QDB_HTTP_SECURITY_READONLY=true
+      - QBD_LINE_UDP_ENABLED=true
+      - QDB_HTTP_MIN_ENABLED=true
+

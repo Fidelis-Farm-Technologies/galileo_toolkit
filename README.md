@@ -157,10 +157,10 @@ To enable ASN tagging, download **GeoLite2-ASN.mmdb** from [MaxMind](https://dev
 To enable Country tagging, download **GeoLite2-Country.mmdb** from [MaxMind](https://dev.maxmind.com/geoip/geolite2-free-geolocation-data). Then, map the file in the volume section of docker-compose.yml to: /var/galileo/maxmind/GeoLite2-Country.mmdb.  For example, see the [docke-compose file](./docker-compose.yml) in this repository.
 
 ## Galileo Dashboard
-![Galileo Dashboard](packet-dynamics.png)
+![Galileo Dashboard](galileo-dashboard2.png)
 This project includes a [customized Grafana-based docker image](https://hub.docker.com/repository/docker/fidelismachine/galileo_app/general) (aka galileo_dashboard) for visualizing and analyzing flow-based network traffic. Please note, the dashboard are currently under development.
 
-![Galileo Dashboard](packet-dynamics2.png)
+![Galileo Dashboard](galileo-dashboard3.png)
 
 See the galileo_app section in docker-compose.yml file included in this project for details, then refer to the [QuestDB - Grafana tutorial](https://questdb.io/blog/time-series-monitoring-dashboard-grafana-questdb/) to learn how to interact and build custom dashboard.
 

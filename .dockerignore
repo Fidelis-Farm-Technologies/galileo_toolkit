@@ -3,5 +3,5 @@ var
 .cargo
 **/*.tar.gz
 .env
-
-
+build_scripts
+gnat_proxy

@@ -77,7 +77,7 @@ services:
       - QDB_LOG_W_STDOUT_LEVEL=ERROR
       - QDB_LOG_W_FILE_LEVEL=ERROR
       - QDB_LOG_W_HTTP_MIN_LEVEL=ERROR
-      - QDB_SHARED_WORKER_COUNT=2        # Amount of worker threads
+      - QDB_SHARED_WORKER_COUNT=4        # Amount of worker threads
       - QDB_PG_USER=${GNAT_USERNAME}     # postgresql user -> Configured in .env file
       - QDB_PG_PASSWORD=${GNAT_PASSWORD} # postgresql password -> Configured in .env file
       - QDB_TELEMETRY_ENABLED=false      # Disable telemetry

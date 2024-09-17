@@ -79,7 +79,7 @@ docker pull fidelismachine/galileo_dashboard:latest
 ### [Galileo Proxy](https://hub.docker.com/r/fidelismachine/galileo_proxy)
 This docker image includes a customized version of nginx configured to operate as a reverse proxy to Grafana.
 ```
-docker pull fidelismachine/galileo_dashboard:latest
+docker pull fidelismachine/galileo_proxy:latest
 ```
 ---
 

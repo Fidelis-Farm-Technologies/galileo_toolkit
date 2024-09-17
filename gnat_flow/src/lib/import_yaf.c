@@ -44,7 +44,8 @@ static int processYafStatsRecord(const FILE *output_fp, const YAF_STATS_RECORD *
     "CREATE TABLE flow ("                                                                  \
     "observ VARCHAR,stime TIMESTAMP,etime TIMESTAMP,dur UINTEGER,rtt UINTEGER, pcr FLOAT," \
     "proto VARCHAR,addr VARCHAR,raddr VARCHAR,port USMALLINT,rport USMALLINT,"             \
-    "iflags VARCHAR,uflags VARCHAR,"                                                       \
+    "iflags VARCHAR,riflags VARCHAR,"                                                      \
+    "uflags VARCHAR,ruflags VARCHAR,"                                                      \
     "tcpseq UINTEGER,rtcpseq UINTEGER,"                                                    \
     "vlan USMALLINT,rvlan USMALLINT,"                                                      \
     "pkts UBIGINT,rpkts UBIGINT,"                                                          \

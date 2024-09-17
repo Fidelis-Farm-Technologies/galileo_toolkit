@@ -29,7 +29,7 @@ The design of the Galileo Toolkit is motivated by the Unix Philosophy ([Wikipedi
 - [&check;] Phase 1 - Implement a toolkit of commandline applications in Rust.
 - [&check;] Phase 2 - Build a Docker container images that integrate commandline applications, YAF, QuestDB , and Grafana.
 - [&check;] Phase 3 - Publish a docker-compose.yml as an example of fully functional network monitoring solution (less anomaly detection functions).
-- [&nbsp;] Phase 4 - Add anomaly detection commandline application that uses the PyTorch library and docker-compose.yml to demonstrate usage.
+- [&nbsp;] Phase 4 - By the end of 2024, finish implementing anomaly detection commandline application that uses the PyTorch library and docker-compose.yml to demonstrate usage.
 
 ## Commandline Applications
 The following commandline applications are designed to run in Docker containers:
@@ -61,8 +61,6 @@ Using the *"--command=inference"* option, gnat_detect performs inference using t
 7. Data is imported into QuestDB for time-series analysis.
 6. Customized Grafana application enables exploration and visualation of network flow records.
 
-
-
 ## Docker Images
 
 ### [Galileo Toolkit](https://hub.docker.com/r/fidelismachine/galileo_toolkit)
@@ -78,6 +76,11 @@ This docker image includes a customized version of Grafana.  It is a trimmed dow
 docker pull fidelismachine/galileo_dashboard:latest
 ```
 
+### [Galileo Proxy](https://hub.docker.com/r/fidelismachine/galileo_proxy)
+This docker image includes a customized version of nginx configured to operate as a reverse proxy to Grafana.
+```
+docker pull fidelismachine/galileo_dashboard:latest
+```
 ---
 
 ## Quick Start with Docker Compose
@@ -85,17 +88,15 @@ Although phase 4 is still under development, you can still utilize the Galileo T
 
 First, create an .env file with the following settings:
 ```
-galileo_INTERFACE="eno1"
-galileo_ID="crozet"
-galileo_USERNAME="admin"
-galileo_PASSWORD="quest"
-galileo_DATABASE="questdb:9009"
+GNAT_INTERFACE="enp4s0"
+GNAT_OBSERVATION_TAG="fidelis"
+GNAT_USERNAME="admin"
+GNAT_PASSWORD="quest"
 ```
-- galileo_INTERFACE -- monitoring network interface
-- galileo_ID -- unique sensor id label that will appear in the database
-- galileo_USERNAME -- QuestDB username 
-- galileo_PASSWORD -- QuestDB password
-- galileo_DATABASE -- QuestDB hostname and port number
+- GNAT_INTERFACE -- monitoring network interface
+- GNAT_OBSERVATION_TAG -- unique sensor id label that will identify the probe
+- GNAT_USERNAME -- QuestDB username 
+- GNAT_PASSWORD -- QuestDB password
 
 Then, launch Docker Compose.
 
@@ -114,41 +115,63 @@ QDB_HTTP_ENABLED=true
 See the [QuestDb documentation](https://questdb.io/docs/reference/sql/overview/) for more details. 
 
 ## Flow Table Schema
-| field | type      | description    |
-| ----- | -------   | -------------- |
-| sid   | symbol    | sensor id      |
-| sasnorg | symbol  | src ASN organization|
-| scountry | symbol  | src country |
-| dasnorg | symbol  | dst ASN organization |
-| dcountry | symbol  | dst country |
-| reason | symbol   | flow termination reason |
-| applabel | symbol | application label |
-| spd | symbol      | sequence of direction of 1st eight packets |
-| stime | timestamp | start time     |
-| ltime | timestamp | last time      |
-| proto | long      | protocol       |
-| saddr | string    | src IP address |
-| sport | long      | src port number|
-| daddr | string    | dst IP address |
-| dport | long      | dst port number|
-| sasn | long       | src ASN |
-| dasn | long       | dst ASN |
-| sutcp | string    | union of src TCP flags |
-| dutcp | string    | union of dst TCP flags |
-| sitcp | string    | initial src TCP flags |
-| ditcp | string    | initial dst TCP flags |
-| vlan | long       | VLAN id|
-| sdata | long      | total src data (payload) in bytes|
-| ddata | long      | total dst data (payload) in bytes|
-| sbytes | long     | total src bytes|
-| dbytes | long     | total dst bytes|
-| sentropy | long   | entropy of src data |
-| dentropy | long   | entropy of dst data |
-| siat | long       | src average interarrivate time |
-| diat | long       | dst average interarrivate time |
+The fields are described in greater detail in the [YAF 3 Records and Templates documentation](https://tools.netsa.cert.org/yaf/docs.html#yaf-3-rec-tmpl)
 
-
-| timestamp | timestamp | record insertion time      |
+| field  | type      | description    |
+| -----  | -------   | -------------- |
+| observ | String | sensor id / observation point |
+| stime  | u64 | start time|
+| etime  | u64 | end time|
+| dur    | u32 | duration|
+| rtt    | u32 | TCP roundtrip time|
+| pcr    | f64 | producer/consumer ratio (derived from YAF data)|
+| proto  | String | protocol|
+| addr  | String | IP address|
+| raddr  | String | reverse IP address|
+| port  | u32 | port |
+| rport  | u32 | reverse port|
+| iflags  | String | initial TCP flags of both directions |
+| uflags  | String | union TCP flags of both directions|
+| tcpseq  | u32 | initial TCP seq number|
+| rtcpseq  | u32 | reverse initial TCP seq number|
+| vlan  | u16 | initial VLAN id|
+| rvlan  | u16 | reverse VLAN id|
+| pkts  | u64 | packet count|
+| rpkts  | u64 | reverse packet count|
+| byte  | u64 | byte count|
+| rbytes  | u64 | reverse byte count|
+| entropy  | u8 | entropy |
+| rentropy  | u8 | reverse entropy|
+| iat  | u64 | avg interarrival time|
+| riat  | u64 | reverse avg inter-arrival time|
+| stdev  | u64 | stdev iat |
+| rstdev  | u64 | reverse stdev riat|
+| tcpurg  | u32 | TCP urgent count |
+| rtcpurg | u32 | reverse TCP urgent count|
+| smallpktcnt  | u32 | small packet count |
+| rsmallpktcnt | u32 | reverse small packet count|
+| largepktcnt  | u32 | large packet count |
+| rlargepktcnt | u32 | reverse large packet count|
+| nonemptypktcnt  | u32 | nonempty packet count |
+| rnonemptypktcnt | u32 | reverse nonempty packet count|
+| firstnonemptysize  | u16 | first nonempty packet size |
+| rfirstnonemptysize | u16 | reverse first nonempty packet size|
+| maxpktsize  | u16 | largest payload size |
+| rmaxpktsize | u16 | reverse largest payload size|
+| stdevpayload  | u16 | stddev of the payload size for up to the first 10 non empty packets |
+| rstdevpayload | u16 | reverse stddev of the payload size for up to the first 10 non empty packets|
+| spd | String | sequence of packet direction of first 8 non-empty packets|
+| appid | String | applicaton id|
+| reason | String | flow record reason|
+| mac | String | MAC address|
+| rmac | String | reverse MAC address|
+| country | String | country code|
+| rcountry| String | reverse country code|
+| asn | String | ASN code|
+| rasn| String | reverse ASN code|
+| asn | String | ASN organization name|
+| rasn| String | reverse ASN organizaton name|
+| timestamp | timestamp | flow record insertion time      |
 
 ## GeoLite2 ASN tagging
 To enable ASN tagging, download **GeoLite2-ASN.mmdb** from [MaxMind](https://dev.maxmind.com/geoip/geolite2-free-geolocation-data). Then, map the file in the volume section of docker-compose.yml to: /var/galileo/maxmind/GeoLite2-ASN.mmdb.  For example, see the [docke-compose file](./docker-compose.yml) in this repository.
@@ -156,21 +179,23 @@ To enable ASN tagging, download **GeoLite2-ASN.mmdb** from [MaxMind](https://dev
 ## GeoLite2 Countring tagging
 To enable Country tagging, download **GeoLite2-Country.mmdb** from [MaxMind](https://dev.maxmind.com/geoip/geolite2-free-geolocation-data). Then, map the file in the volume section of docker-compose.yml to: /var/galileo/maxmind/GeoLite2-Country.mmdb.  For example, see the [docke-compose file](./docker-compose.yml) in this repository.
 
-## Galileo Dashboard
+## Galileo Dashboard Examples
+Galileo Dashboard is a [customized Grafana-based docker image](https://hub.docker.com/repository/docker/fidelismachine/galileo_dashboard/general) for visualizing, exploring, and analyzing network traffic. Below are two examples of available dashboards:
+
 ![Galileo Dashboard](galileo-dashboard2.png)
-This project includes a [customized Grafana-based docker image](https://hub.docker.com/repository/docker/fidelismachine/galileo_app/general) (aka galileo_dashboard) for visualizing and analyzing flow-based network traffic. Please note, the dashboard are currently under development.
+
 
 ![Galileo Dashboard](galileo-dashboard3.png)
 
-See the galileo_app section in docker-compose.yml file included in this project for details, then refer to the [QuestDB - Grafana tutorial](https://questdb.io/blog/time-series-monitoring-dashboard-grafana-questdb/) to learn how to interact and build custom dashboard.
+To add your own custom dashaboard panels, refer to the [QuestDB - Grafana tutorial](https://questdb.io/blog/time-series-monitoring-dashboard-grafana-questdb/) to learn how to interact and query the data using the [QuestDB Grafana plugin](https://grafana.com/grafana/plugins/questdb-questdb-datasource/).
 
-Note: the default login is:<br>
+Note: the default QuestDb login is:<br>
 
 &emsp;username: admin<br>
 &emsp;password: admin<br>
 
-### Galileo Application TLS
-galileo App includes an automatically generated self-signed certificate for TLS. To use a certificate signed by a Certificate Authority (CA), map the certificate files in docker-compose.yml. For example, see the galileo_nginx section in docker-compose.yml:
+### Galileo Proxy TLS
+Galileo Proxy includes an automatically generated self-signed certificate for TLS. To use a certificate signed by a Certificate Authority (CA), map the certificate files in docker-compose.yml. For example, see the galileo_proxy section in docker-compose.yml:
 ```
   ...
   galileo_proxy:

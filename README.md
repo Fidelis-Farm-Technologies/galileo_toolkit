@@ -1,5 +1,5 @@
-![galileo](gnat-dark.png#gh-dark-mode-only)
 ![galileo](gnat-light.png#gh-light-mode-only)
+![galileo](gnat-dark.png#gh-dark-mode-only)
 
 
 Galileo Network Analytics Toolkit (formerly ShadowMeter) is a microservices-oriented toolkit for building advanced network monitoring and anomaly detection solutions. Designed to be deployed with [Docker](https://www.docker.com/) containers, the toolkit includes unix-like commandline applications implemented in [Rust](https://www.rust-lang.org/).  
@@ -29,7 +29,7 @@ The design of the Galileo Toolkit is motivated by the Unix Philosophy ([Wikipedi
 - [&check;] Phase 1 - Implement a toolkit of commandline applications in Rust.
 - [&check;] Phase 2 - Build a Docker container images that integrate commandline applications, YAF, QuestDB , and Grafana.
 - [&check;] Phase 3 - Publish a docker-compose.yml as an example of fully functional network monitoring solution (less anomaly detection functions).
-- [&nbsp;] Phase 4 - By the end of 2024, finish implementing anomaly detection commandline application that uses the PyTorch library and docker-compose.yml to demonstrate usage.
+- [&nbsp;] Phase 4 - By the end of 2024, finish implementing anomaly detection commandline application that uses the PyTorch library plus publish docker-compose.yml to demonstrate usage.
 
 ## Commandline Applications
 The following commandline applications are designed to run in Docker containers:

@@ -44,8 +44,7 @@ static int processYafStatsRecord(const FILE *output_fp, const YAF_STATS_RECORD *
     "CREATE TABLE flow ("                                                                  \
     "observ VARCHAR,stime TIMESTAMP,etime TIMESTAMP,dur UINTEGER,rtt UINTEGER, pcr FLOAT," \
     "proto VARCHAR,addr VARCHAR,raddr VARCHAR,port USMALLINT,rport USMALLINT,"             \
-    "iflags VARCHAR,riflags VARCHAR,"                                                      \
-    "uflags VARCHAR,ruflags VARCHAR,"                                                      \
+    "iflags VARCHAR,uflags VARCHAR,"                                                       \
     "tcpseq UINTEGER,rtcpseq UINTEGER,"                                                    \
     "vlan USMALLINT,rvlan USMALLINT,"                                                      \
     "pkts UBIGINT,rpkts UBIGINT,"                                                          \
@@ -269,7 +268,6 @@ static int append_yaf_record(duckdb_appender appender,
     duckdb_timestamp end = {(flow->flowEndMilliseconds * 1000)};
     duckdb_append_timestamp(appender, end);
     duckdb_append_uint32(appender, (flow->flowEndMilliseconds - flow->flowStartMilliseconds)); // duration
-
     duckdb_append_uint32(appender, flow->reverseFlowDeltaMilliseconds);
 
     double pcr = 0.0;
@@ -850,9 +848,11 @@ int yaf_import(const char *observation,
             if (process_yaf_record(observation, appender, ndpi_ctx, &yaf_record, asn_mmdb_ptr, country_mmdb_ptr) < 0)
             {
                 fprintf(stderr, "%s: %s", __FUNCTION__, strerror(errno));
+                flow_count=-1;
                 break;
             }
             flow_count++;
+            memset(&yaf_record, 0, yaf_rec_len);
         }
         if (!g_error_matches(err, FB_ERROR_DOMAIN, FB_ERROR_EOF))
             GLIB_ERROR_RETURN(err);

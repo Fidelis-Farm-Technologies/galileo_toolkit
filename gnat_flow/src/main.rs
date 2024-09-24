@@ -1,6 +1,6 @@
 /*
  * Galileo Network Analytics (GNA) Toolkit
- * 
+ *
  * Copyright 2024 Fidelis Farm & Technologies, LLC
  * All Rights Reserved.
  * See license information in LICENSE.
@@ -115,7 +115,7 @@ fn parse_command() {
         "import" => {
             let observation = args.observation.unwrap().clone();
             let asn = args.asn.unwrap_or(String::new()).clone();
-            let country = args.country.unwrap_or(String::new()).clone();  
+            let country = args.country.unwrap_or(String::new()).clone();
             let _ = import(
                 &observation,
                 &input_spec,
@@ -128,11 +128,7 @@ fn parse_command() {
         }
         "export" => {
             let format = args.format.clone().unwrap_or("json".to_string());
-            if format == "questdb" {
-                let _ = export(&input_spec, &uri_spec, &processed_spec, polling, &format);
-            } else {
-                let _ = export(&input_spec, &output_spec, &processed_spec, polling, &format);
-            }
+            let _ = export(&input_spec, &output_spec, &processed_spec, polling, &format);
         }
         _ => {
             eprintln!("error: invalid --command <option>");

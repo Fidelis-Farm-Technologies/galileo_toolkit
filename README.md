@@ -50,6 +50,8 @@ Using the *"--command=feature"* option, gnat_detect generates a  feature file in
 
 Using the *"--command=inference"* option, gnat_detect performs inference using the Rust bindings for the C++ api of PyTorch and annotates the record with a score.
 
+For more details about the command line applications and docker images please refer to the [docs directory](./docs).
+
 ## Concept of Operation
 ![galileo](docs/images/gnat-block.png)
 1. **gnat_yaf** captures live traffic and generates IPFIX files at regular intervals.

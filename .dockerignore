@@ -5,3 +5,4 @@ var
 .env
 build_scripts
 gnat_proxy
+docker-compose.yml

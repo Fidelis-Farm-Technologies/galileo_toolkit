@@ -20,6 +20,12 @@ WORKDIR /builder/gnat_flow
 RUN cargo build --release
 
 #
+# build gnat_db
+#
+WORKDIR /builder/gnat_db
+RUN cargo build --release
+
+#
 # build gnat_detect
 #
 WORKDIR /builder/gnat_detect

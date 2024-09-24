@@ -6,16 +6,18 @@
  * See license information in LICENSE.
  */
 
-//use duckdb::arrow::datatypes::ArrowNativeType;
-//use questdb::ingress::{Buffer, Sender, TimestampNanos};
+use duckdb::arrow::datatypes::ArrowNativeType;
+use questdb::ingress::{Buffer, Sender, TimestampNanos};
 
 use std::fs;
 use std::path::PathBuf;
 use std::thread;
 use std::time::Duration;
 
+use chrono::offset::Utc;
 use duckdb::Connection;
-/* 
+use url::Url;
+
 #[derive(Debug)]
 struct FlowRecord {
     observ: String,
@@ -195,9 +197,9 @@ fn insert_questdb_records(
             .unwrap()
             .column_str("uflags", record.uflags)
             .unwrap()
-            .column_i64("tcpseq", record.tcpseq.to_i64().unwrap())
+            .column_i64("tcpseq", record.tcpseq.to_i64().unwrap_or(0))
             .unwrap()
-            .column_i64("rtcpseq", record.rtcpseq.to_i64().unwrap())
+            .column_i64("rtcpseq", record.rtcpseq.to_i64().unwrap_or(0))
             .unwrap()
             .column_i64("vlan", record.vlan.to_i64().unwrap())
             .unwrap()
@@ -267,77 +269,149 @@ fn insert_questdb_records(
     }
 }
 
-pub fn export_questdb(input_spec: &String, db_in: &Connection, db_out: &String) -> bool {
-    match Sender::from_conf(format!("tcp::addr={db_out};")) {
-        Ok(mut db_out) => insert_questdb_records(input_spec, db_in, &mut db_out),
-        Err(e) => {
-            eprintln!("error: processing file: {e:?}");
-            return false;
-        }
-    };
-    println!("exported: {} => {}", input_spec, db_out);
-    true
-}
-*/
-pub fn export_file(input_spec: &String, output_spec: &String, format: &String) -> bool {
-    let conn = match Connection::open_in_memory() {
+pub fn insert_questdb_table(input_spec: &String, host_spec: &String, ilp_port: u16)  {
+    
+    let db_in = match Connection::open_in_memory() {
         Ok(s) => s,
         Err(e) => panic!("error:  open_in_memory() - {}", e),
     };
 
-    let sql_command: String;
-    match format.as_str() {
-        "csv" => {
-            sql_command = format!(
-                "COPY (SELECT * FROM '{}') TO '{}.csv' (HEADER, DELIMITER ',');",
-                input_spec, output_spec
-            );
-            println!("exported: {} => {}", input_spec, output_spec);
-        }
-        "json" => {
-            sql_command = format!(
-                "COPY (SELECT * FROM '{}') TO '{}';",
-                input_spec, output_spec
-            );
-        }
-        _ => {
-            // default is JSON
-            sql_command = format!(
-                "COPY (SELECT * FROM '{}') TO '{}';",
-                input_spec, output_spec
-            );
-            println!("exported: {} => {}", input_spec, output_spec);
-        }
-    }
-
-    match conn.execute_batch(&sql_command) {
-        Ok(c) => c,
+    match Sender::from_conf(format!("tcp::addr={}:{};", host_spec, ilp_port)) {
+        Ok(mut db_out) => insert_questdb_records(input_spec, &db_in, &mut db_out),
         Err(e) => {
-            eprintln!("error: exporting file {} -- {:?}", input_spec, e);
-            return false;
+            panic!("error: processing file: {e:?}");
         }
     };
-
-    true
+    println!("exported: {} => {}:{}", input_spec, host_spec, ilp_port);
 }
 
-pub fn export(
+pub fn create_questdb_table(host_spec: &String, api_port: u16) {
+    let sql_create_table: &'static str = r#"
+        CREATE TABLE IF NOT EXISTS flow(
+            observ SYMBOL CAPACITY 64 INDEX,
+            proto SYMBOL CAPACITY 1024 INDEX,
+            applabel SYMBOL CAPACITY 256 INDEX,
+            spd SYMBOL CAPACITY 4096 INDEX,
+            reason SYMBOL CAPACITY 8 INDEX,
+            asnorg SYMBOL CAPACITY 2048 INDEX,
+            rasnorg SYMBOL CAPACITY 2048 INDEX,
+            country SYMBOL CAPACITY 256 INDEX,
+            rcountry SYMBOL CAPACITY 256 INDEX,
+            stime TIMESTAMP,
+            etime TIMESTAMP,
+            dur INT,
+            rtt INT,
+            pcr FLOAT,
+            vlan INT,
+            rvlan INT,
+            addr STRING,
+            raddr STRING,
+            port INT,
+            rport INT,
+            asn INT,
+            rasn INT,
+            iflags STRING,
+            uflags STRING,
+            tcpseq LONG,
+            rtcpseq LONG,
+            pkts LONG,
+            rpkts LONG,
+            bytes LONG,
+            rbytes LONG,
+            entropy SHORT,
+            rentropy SHORT,
+            iat LONG,
+            riat LONG,
+            stdev LONG,
+            rstdev LONG,
+            tcpurg INT,
+            rtcpurg INT,
+            smallpktcnt INT,
+            rsmallpktcnt INT,
+            largepktcnt INT,
+            rlargepktcnt INT,
+            nonemptypktcnt INT,
+            rnonemptypktcnt INT,
+            firstnonemptysize SHORT,
+            rfirstnonemptysize SHORT,
+            maxpktsize SHORT,
+            rmaxpktsize SHORT,
+            stdevpayload SHORT,
+            rstdevpayload SHORT,
+            mac STRING,
+            rmac STRING,
+            timestamp TIMESTAMP
+            ) TIMESTAMP(timestamp) PARTITION BY DAY;"#;
+
+    let host = format!("http://{}:{}/exec", host_spec, api_port);
+    let url =
+        Url::parse_with_params(&host, &[("query", sql_create_table)]).expect("invalid url params");
+
+    match reqwest::blocking::get(url) {
+        Ok(r) => println!("verified flow table: {}", r.status()),
+        Err(e) => panic!("error: creating flow table - {:?}", e)
+    };
+}
+
+pub fn drop_questdb_partitions(host_spec: &String, api_port: u16, retention_days: u16) {
+    let sql_drop_partition = format!(
+        "ALTER TABLE flow DROP PARTITION WHERE timestamp < dateadd('d', -{}, now());",
+        retention_days
+    );
+    let mut host = format!("http://{}:{}/exec", host_spec, api_port);
+    let drop_url = Url::parse_with_params(&host, &[("query", sql_drop_partition)]).expect("invalid url");
+
+    match reqwest::blocking::get(drop_url) {
+        Ok(_r) => println!("dropped days older than {}", retention_days),
+        Err(_e) => panic!("error: dropping day partition(s)")
+    };
+
+    host = format!("http://{}:{}/exec", host_spec, api_port);
+    let vacuum_url = Url::parse_with_params(&host, &[("query", "VACUUM TABLE flow;")]).expect("invalid url");
+    match reqwest::blocking::get(vacuum_url) {
+        Ok(_r) => println!("vacuumed flow table"),
+        Err(_e) => panic!("error: vacumming flow table)")
+    };
+
+}
+
+pub fn questdb_export(
     input_spec: &String,
-    output_spec: &String,
+    host_spec: &String,
+    ilp_port: u16,
+    api_port: u16,
     processed_spec: &String,
+    retention_days: u16,
     polling: bool,
-    format: &String,
 ) {
     if PathBuf::from(input_spec.clone()).is_dir() {
         println!("\tinput spec: {}", input_spec);
-        println!("\toutput spec: {}", output_spec);
-        println!("\tprocessed spec: {}", processed_spec);
-        println!("\texport format: {}", format);
+        println!("\tprocessed spec: {}", processed_spec);        
+        println!("\tdb spec: {}", host_spec);
+        println!("\tilp port: {}", ilp_port);
+        println!("\tapi port: {}", api_port);
         println!("\tpolling: {}", polling);
+
+        //
+        // create flow table if it does not exist
+        //
+        create_questdb_table(host_spec, api_port);
+
+        let mut last = Utc::now();
 
         let poll_interval = Duration::from_millis(1000);
         println!("export scanner: running [{}]", input_spec);
         loop {
+            //
+            // is it time to drop older days (partitions)?
+            //
+            let now = Utc::now();
+            let duration = now.signed_duration_since(last);
+            if duration.num_days() > 1 {
+                last = now;
+                drop_questdb_partitions(host_spec, api_port, retention_days);
+            }
+
             let mut counter = 0;
             let directory = match fs::read_dir(input_spec) {
                 Ok(d) => d,
@@ -363,14 +437,7 @@ pub fn export(
                 }
 
                 if !file_name.starts_with(".") && file_name.ends_with(".parquet") {
-                    let dst_spec;
-                    if format == "questdb" {
-                        dst_spec = output_spec.clone();
-                    } else {
-                        dst_spec = format!("{}/{}.{}", output_spec, file_name, format);
-                    }
-
-                    if export_file(&src_path, &dst_spec, format) {
+                    if insert_questdb_table(&src_path, &host_spec, ilp_port) {
                         if !processed_spec.is_empty() {
                             let processed_path =
                                 format!("{}/{}", &processed_spec, file_name.to_string());
@@ -384,7 +451,10 @@ pub fn export(
                             };
                         }
                     } else {
-                        eprintln!("error: exporting {} => {}", src_path, dst_spec);
+                        eprintln!(
+                            "error: exporting {} => {}:{}",
+                            src_path, host_spec, ilp_port
+                        );
                         std::process::exit(exitcode::PROTOCOL);
                     }
                     counter += 1;
@@ -398,6 +468,6 @@ pub fn export(
             }
         }
     } else {
-        export_file(input_spec, output_spec, format);
+        insert_questdb_table(input_spec, &host_spec, ilp_port);
     }
 }

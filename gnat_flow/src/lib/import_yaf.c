@@ -63,7 +63,8 @@ static int processYafStatsRecord(const FILE *output_fp, const YAF_STATS_RECORD *
     "mac VARCHAR,rmac VARCHAR,"                                                            \
     "country VARCHAR,rcountry VARCHAR,"                                                    \
     "asn UINTEGER,rasn UINTEGER,"                                                          \
-    "asnorg VARCHAR,rasnorg VARCHAR"                                                       \
+    "asnorg VARCHAR,rasnorg VARCHAR,"                                                      \
+    "model VARCHAR,score FLOAT"                                                            \
     ")"
 
 static void
@@ -622,6 +623,11 @@ static int append_yaf_record(duckdb_appender appender,
     duckdb_append_uint32(appender, dasn);
     duckdb_append_varchar(appender, sasnorg);
     duckdb_append_varchar(appender, dasnorg);
+
+    char model_name[4] = {"na"};
+    float score = 0.0;
+    duckdb_append_varchar(appender, model_name); // model name
+    duckdb_append_float(appender, score);  // score
 
     /* release scratch buffers */
     g_string_free(buffer, TRUE);

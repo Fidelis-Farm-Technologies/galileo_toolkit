@@ -47,5 +47,5 @@ fn main() {
     let processed_spec = args.processed.unwrap_or(String::new()).clone();
     let poll = args.polling.unwrap_or(false).clone();
 
-    let _ = questdb_export(&input_spec, &host_spec, ilp_port, api_port, &processed_spec, retention_days, poll);
+    questdb_export(&input_spec, &host_spec, ilp_port, api_port, &processed_spec, retention_days, poll);
 }

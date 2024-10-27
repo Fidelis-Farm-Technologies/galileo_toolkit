@@ -1,8 +1,8 @@
 #
 #
 #
-export LIBTORCH=${PWD}/../../libtorch
-export LIBTORCH_INCLUDE=${LIBTORCH}
-export LIBTORCH_LIB=${LIBTORCH}
-export LD_LIBRARY_PATH=${LIBTORCH}/lib:$LD_LIBRARY_PATH
+export LIBTORCH=/development/libtorch
+export LIBTORCH_INCLUDE=/development/libtorch
+export LIBTORCH_LIB=/development/libtorch
+export LD_LIBRARY_PATH=/development/libtorch/lib:$LD_LIBRARY_PATH
 #export LIBTORCH_BYPASS_VERSION_CHECK=1

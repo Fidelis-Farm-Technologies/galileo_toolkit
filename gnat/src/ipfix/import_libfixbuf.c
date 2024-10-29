@@ -156,6 +156,7 @@ ycOpenReader(
     uint32_t *flags,
     GError **err)
 {
+    fprintf(stderr, "%s:\n", __FUNCTION__);
     GNAT_CONTEXT *gnat = (GNAT_CONTEXT *)ctx;
     do
     {
@@ -224,6 +225,7 @@ ycCloseReader(
     uint32_t *flags,
     GError **err)
 {
+    fprintf(stderr, "%s:\n", __FUNCTION__);
     GNAT_CONTEXT *gnat = (GNAT_CONTEXT *)ctx;
     if (gnat)
     {
@@ -255,6 +257,7 @@ int libfixbuf_file_import(
     MIOAppDriver adrv;
     uint32_t miodflags = 0;
 
+    fprintf(stderr, "%s:\n", __FUNCTION__);
     memset(&source, 0, sizeof(MIOSource));
     memset(&sink, 0, sizeof(MIOSink));
     memset(&adrv, 0, sizeof(MIOAppDriver));
@@ -284,15 +287,13 @@ int libfixbuf_file_import(
     adrv.app_close_sink = CloseFileSink;
     adrv.app_process = ReaderToFileSink;
 
-    g_message("libfixbuf_file_import: initializing");
-
-    /* create a source around a listener */
+    g_message("libfixbuf_file_import: staring up");
     if (!mio_source_init_app(&source, mio_ov_in, MIO_T_APP, &gnat, &err))
     {
         air_opterr("libfixbuf_file_import: cannot set up MIO input: %s", err->message);
     }
 
-    g_message("libfixbuf_file_import: starting up");
+    g_message("libfixbuf_file_import: processing %s", input_file);
     /* do dispatch here */
     if (!mio_dispatch_loop(&source,
                            &sink,
@@ -426,7 +427,7 @@ int libfixbuf_socket_import(
     adrv.app_close_sink = CloseFileSink;
     adrv.app_process = SocketToFileSink;
 
-    g_message("libfixbuf_socket_import: initializing");
+    g_message("libfixbuf_socket_import: starting up");
 
     /* create a source around a listener */
     if (!mio_source_init_app(&source, mio_ov_in, MIO_T_APP, &gnat, &err))
@@ -434,7 +435,7 @@ int libfixbuf_socket_import(
         air_opterr("libfixbuf_socket_import: cannot set up MIO input: %s", err->message);
     }
 
-    g_message("libfixbuf_socket_import: starting up");
+    g_message("libfixbuf_socket_import: loop");
     /* do dispatch here */
     if (!mio_dispatch_loop(&source,
                            &sink,

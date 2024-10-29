@@ -59,6 +59,7 @@ pub fn import(
                     if Path::new(lock_path.as_str()).exists() {
                         continue;
                     }
+                    println!("import scanner: processing [{}]", src_path);
                     let status = safe_ipfix_file_import(
                         &observation_tag,
                         &src_path,

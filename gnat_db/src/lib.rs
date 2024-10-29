@@ -1,15 +1,15 @@
-//use questdb::ingress::Sender;
-use url::Url;
-
 pub mod table {
     pub mod appid;
     pub mod asn;
     pub mod bytes;
     pub mod country;
     pub mod dns;
+    pub mod doh;    
     pub mod flow;
     pub mod packets;
     pub mod proto;
+    pub mod ssh;     
+    pub mod quic;    
 }
 
 pub trait TableTrait {
@@ -24,7 +24,7 @@ pub trait TableTrait {
             retention_days
         );
         let drop_url =
-            Url::parse_with_params(api_url, &[("query", sql_drop_partition)]).expect("invalid url");
+            url::Url::parse_with_params(api_url, &[("query", sql_drop_partition)]).expect("invalid url");
 
         println!("Executing: {}", drop_url.as_str());
         match reqwest::blocking::get(drop_url) {
@@ -34,7 +34,7 @@ pub trait TableTrait {
 
         let sql_vacuum_table = format!("VACUUM TABLE {:?};", self.table_name());
         let vacuum_url =
-            Url::parse_with_params(api_url, &[("query", sql_vacuum_table)]).expect("invalid url");
+            url::Url::parse_with_params(api_url, &[("query", sql_vacuum_table)]).expect("invalid url");
 
         println!("Executing: {}", vacuum_url.as_str());
         match reqwest::blocking::get(vacuum_url) {

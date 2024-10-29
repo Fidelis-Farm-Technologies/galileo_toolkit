@@ -11,7 +11,6 @@ use chrono::offset::Utc;
 use std::env;
 use std::fs;
 use std::path::Path;
-//use std::path::PathBuf;
 use std::thread;
 use std::time::Duration;
 
@@ -23,9 +22,12 @@ use gnat_db::table::asn::AsnTable;
 use gnat_db::table::bytes::BytesTable;
 use gnat_db::table::country::CountryTable;
 use gnat_db::table::dns::DnsTable;
+use gnat_db::table::doh::DohTable;
 use gnat_db::table::flow::FlowTable;
 use gnat_db::table::packets::PacketsTable;
 use gnat_db::table::proto::ProtoTable;
+use gnat_db::table::ssh::SshTable;
+use gnat_db::table::quic::QuicTable;
 use gnat_db::TableTrait;
 
 #[derive(Debug, Parser)]
@@ -53,7 +55,7 @@ struct Args {
     processed: Option<String>,
 
     #[arg(long)]
-    tables: Option<String>,    
+    tables: Option<String>,
 }
 
 fn questdb_insert(
@@ -64,7 +66,7 @@ fn questdb_insert(
     api_port: u16,
     processed_spec: &String,
     retention_days: u16,
-    table_spec: &String,    
+    table_spec: &String,
 ) {
     println!("\tinput spec: {}", input_spec);
     println!("\tprocessed spec: {}", processed_spec);
@@ -73,7 +75,7 @@ fn questdb_insert(
     println!("\tapi port: {}", api_port);
     println!("\tretention days: {}", retention_days);
     println!("\tpolling interval: {}", polling_interval);
-    println!("\ttable spec: {}", table_spec);    
+    println!("\ttable spec: {}", table_spec);
     //
     // change working directory
     //
@@ -95,8 +97,11 @@ fn questdb_insert(
     let bytes: BytesTable = BytesTable {
         table_name: "bytes",
     };
-    let country: CountryTable = CountryTable { table_name: "country" };    
+    let country: CountryTable = CountryTable {
+        table_name: "country",
+    };
     let dns: DnsTable = DnsTable { table_name: "dns" };
+    let doh: DohTable = DohTable { table_name: "doh" };    
     let flow: FlowTable = FlowTable { table_name: "flow" };
     let packets: PacketsTable = PacketsTable {
         table_name: "packets",
@@ -104,18 +109,24 @@ fn questdb_insert(
     let proto: ProtoTable = ProtoTable {
         table_name: "proto",
     };
-
-
+    let quic: QuicTable = QuicTable {
+        table_name: "quic",
+    };    
+    let ssh: SshTable = SshTable {
+        table_name: "ssh",
+    };
     let mut table_list: Vec<&dyn TableTrait> = Vec::new();
     table_list.push(&appid);
     table_list.push(&asn);
     table_list.push(&bytes);
     table_list.push(&country);
     table_list.push(&dns);
+    table_list.push(&doh);    
     table_list.push(&flow);
     table_list.push(&packets);
     table_list.push(&proto);
-
+    table_list.push(&ssh);
+    table_list.push(&quic);    
     //
     // instantiate questdb connection
     //
@@ -168,7 +179,6 @@ fn questdb_insert(
             }
 
             if filename.starts_with("gnat") && filename.ends_with(".parquet") {
-
                 // rename file so it isn't clobbered
                 let tmp_filename = format!(".{}", filename.clone());
                 fs::rename(filename.clone(), tmp_filename.clone()).unwrap();
@@ -177,7 +187,10 @@ fn questdb_insert(
                     Ok(s) => s,
                     Err(e) => panic!("error:  open_in_memory() - {}", e),
                 };
-                let sql_command = format!("CREATE TABLE memtable AS SELECT * FROM '{}';", tmp_filename.clone());
+                let sql_command = format!(
+                    "CREATE TABLE memtable AS SELECT * FROM '{}';",
+                    tmp_filename.clone()
+                );
 
                 match source.execute_batch(&sql_command) {
                     Ok(c) => c,
@@ -205,8 +218,7 @@ fn questdb_insert(
                             panic!("Error: moving {} -> {}: {:?}", src_path, processed_path, e)
                         }
                     };
-                }
-                else {
+                } else {
                     fs::remove_file(src_path.clone()).unwrap();
                 }
                 counter += 1;
@@ -247,6 +259,6 @@ fn main() {
         api_port,
         &processed_spec,
         retention_days,
-        tables_spec
+        &tables_spec,
     );
 }

@@ -742,7 +742,7 @@ RotateFileSink(MIOSource *source,
 
         if (gnat->ipfix_flows <= 0)
         {
-             break;
+            break;
         }
         if (!gnat->output_dir || strlen(gnat->output_dir) <= 0)
         {
@@ -796,11 +796,11 @@ CloseFileSink(
     uint32_t *flags,
     GError **err)
 {
-     gboolean status = FALSE;
+    gboolean status = FALSE;
     char file_name[PATH_MAX / 2];
-    char tmp_file[(PATH_MAX * 2) + 1];    
+    char tmp_file[(PATH_MAX * 2) + 1];
     char parquet_file[PATH_MAX];
-    char parquet_export_command[(PATH_MAX * 3) + 1];    
+    char parquet_export_command[(PATH_MAX * 3) + 1];
     do
     {
         GNAT_CONTEXT *gnat = (GNAT_CONTEXT *)ctx;
@@ -868,7 +868,7 @@ CloseFileSink(
         status = TRUE;
     } while (0);
 
-    if (status==FALSE)
+    if (status == FALSE)
         *flags |= MIO_F_CTL_ERROR;
     return status;
 }
@@ -888,7 +888,6 @@ ReaderToFileSink(
     size_t yaf_rec_len = sizeof(ipfix_record);
     while (fBufNext(gnat->input_buf, (uint8_t *)&ipfix_record, &yaf_rec_len, err))
     {
-
         if (WriteIpfixRecord(gnat->observation,
                              gnat->appender,
                              gnat->ndpi_ctx,
@@ -904,11 +903,14 @@ ReaderToFileSink(
         }
         ++gnat->ipfix_flows;
         memset(&ipfix_record, 0, yaf_rec_len);
+        fprintf(stderr, "%s:\n", __FUNCTION__);
     }
 
     if (g_error_matches(*err, FB_ERROR_DOMAIN, FB_ERROR_EOF))
     {
         /* EOF on a single collector not an issue. */
+        sink->active = FALSE;
+        *flags |= (MIO_F_CTL_SINKCLOSE);
         g_clear_error(err);
         return TRUE;
     }
@@ -935,6 +937,7 @@ SocketToFileSink(
     if (gnat->rotate_interval && (time(NULL) > gnat->outtime + gnat->rotate_interval))
     {
         // TODO: export file
+        sink->active = FALSE;
         *flags |= MIO_F_CTL_SINKCLOSE;
     }
 
@@ -1016,6 +1019,8 @@ SocketToFileSink(
             /* EOF on a single collector not an issue. */
             g_clear_error(err);
             g_debug("gnat_collector: normal connection close");
+            sink->active = FALSE;
+            *flags |= MIO_F_CTL_SINKCLOSE;
             return TRUE;
         }
         else

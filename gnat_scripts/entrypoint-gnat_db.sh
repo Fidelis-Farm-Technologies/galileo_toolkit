@@ -14,6 +14,9 @@ if [ ! -d  "${GNAT_PROCESSED_DIR}" ]; then
     mkdir -p ${GNAT_PROCESSED_DIR}
 fi
 
+if [ -z "${GNAT_QDB_POLLING}" ]; then
+    GNAT_QDB_POLLING=60
+fi
 #
 # Launch db exporter
 #
@@ -22,5 +25,5 @@ fi
     --host ${GNAT_QDB_HOST} \
     --retention ${GNAT_QDB_RETENTION} \
     --processed ${GNAT_PROCESSED_DIR} \
-    --polling true 
+    --polling ${GNAT_QDB_POLLING}
 

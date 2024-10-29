@@ -61,7 +61,7 @@ pub fn export(
     processed_spec: &String,
     polling: bool,
     format: &String,
-) {
+) -> Result<(), std::io::Error> {
     if PathBuf::from(input_spec.clone()).is_dir() {
         println!("\tinput spec: {}", input_spec);
         println!("\toutput spec: {}", output_spec);
@@ -134,4 +134,5 @@ pub fn export(
     } else {
         export_file(input_spec, output_spec, format);
     }
+    Ok(())
 }

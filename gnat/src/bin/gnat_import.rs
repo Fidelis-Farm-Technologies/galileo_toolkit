@@ -6,10 +6,9 @@
  * See license information in LICENSE.
  */
 use clap::Parser;
-use gnat::core::collect::collect;
-use gnat::core::export::export;
-use gnat::core::import::import;
 use std::path::Path;
+use gnat::core::import::import;
+
 
 #[derive(Debug, Parser)]
 #[command(version, about, long_about = None)]
@@ -55,13 +54,9 @@ fn main() {
     //
     // verify the combination of arguments are valid
     //
-    if !output_spec.is_empty() {
-        eprintln!("error: --output <spec> and --uri <spec>  options are mutually exclusive");
-        std::process::exit(exitcode::CONFIG)
-    }
 
     if output_spec.is_empty() {
-        eprintln!("error: --output <spec> or --uri <spec>  required",);
+        eprintln!("error: --output <spec>  required",);
         std::process::exit(exitcode::CONFIG)
     }
 

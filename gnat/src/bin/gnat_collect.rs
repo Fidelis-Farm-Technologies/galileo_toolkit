@@ -7,10 +7,8 @@
  */
 
 use clap::Parser;
-use gnat::core::collect::collect;
-use gnat::core::export::export;
-use gnat::core::import::import;
 use std::path::Path;
+use gnat::core::collect::collect;
 
 #[derive(Debug, Parser)]
 #[command(version, about, long_about = None)]
@@ -28,7 +26,7 @@ struct Args {
     output: String,
 
     #[arg(long)]
-    observation: Option<String>,
+    observation: String,
 
     #[arg(long)]
     rotate_interval: Option<u32>,
@@ -59,7 +57,7 @@ fn main() {
     let args = Args::parse();
     let host_spec = args.host.unwrap_or("127.0.0.1".to_string()).clone();
     let output_spec = args.output.clone();
-    let observation = args.observation.unwrap().clone();
+    let observation = args.observation.clone();
     let asn_spec = args.asn.unwrap_or(String::new()).clone();
     let country_spec = args.country.unwrap_or(String::new()).clone();
     let rotate_spec = args.rotate_interval.unwrap_or(60).clone();

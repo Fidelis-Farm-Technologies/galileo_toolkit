@@ -1,8 +1,10 @@
+.vscode
+.cargo
+.env
 target
 var
-.cargo
-**/*.tar.gz
-.env
+old
 build_scripts
 gnat_proxy
 docker-compose.yml
+**/*.tar.gz

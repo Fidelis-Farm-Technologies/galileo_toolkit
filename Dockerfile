@@ -17,16 +17,21 @@ RUN mkdir -p /opt/gnat/bin /opt/gnat/scripts /opt/gnat/etc /opt/gnat/lib/pytorch
 
 COPY /gnat_scripts/entrypoint-gnat_yaf.sh /opt/gnat/scripts/
 COPY /gnat_scripts/entrypoint-gnat_import.sh /opt/gnat/scripts/
+COPY /gnat_scripts/entrypoint-gnat_collect.sh /opt/gnat/scripts/
 COPY /gnat_scripts/entrypoint-gnat_db.sh /opt/gnat/scripts/
+COPY /gnat_scripts/entrypoint-gnat_batch.sh /opt/gnat/scripts/
 
 COPY --from=builder /builder/gnat_etc/protocols /etc
 COPY --from=builder /usr/local/lib /opt/gnat/lib              
 COPY --from=builder /opt/gnat/lib /opt/gnat/lib
 COPY --from=builder /base/libtorch/lib /opt/gnat/lib/pytorch
 
-COPY --from=builder /builder/gnat_flow/target/release/gnat_flow /opt/gnat/bin/gnat_flow
-COPY --from=builder /builder/gnat_detect/target/release/gnat_detect /opt/gnat/bin/gnat_detect
+COPY --from=builder /builder/gnat/target/release/gnat_collect /opt/gnat/bin/gnat_collect
+COPY --from=builder /builder/gnat/target/release/gnat_import /opt/gnat/bin/gnat_import
+COPY --from=builder /builder/gnat/target/release/gnat_export /opt/gnat/bin/gnat_export
+COPY --from=builder /builder/gnat/target/release/gnat_batch /opt/gnat/bin/gnat_batch
 COPY --from=builder /builder/gnat_db/target/release/gnat_db /opt/gnat/bin/gnat_db
+#COPY --from=builder /builder/gnat_ai/target/release/gnat_ai /opt/gnat/bin/gnat_ai
 COPY --from=builder /opt/gnat/bin/yaf /opt/gnat/bin/gnat_yaf
 COPY --from=builder /usr/local/bin/duckdb /opt/gnat/bin/duckdb
 

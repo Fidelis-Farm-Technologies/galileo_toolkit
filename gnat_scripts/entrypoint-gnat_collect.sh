@@ -35,7 +35,7 @@ if [ -f ${GNAT_GEO_COUNTRY} ]; then
    GNAT_GEO_OPTIONS="${GNAT_GEO_OPTIONS} --country ${GNAT_GEO_COUNTRY}"
 fi
 
-/opt/gnat/bin/gnat_import \
+/opt/gnat/bin/gnat_collect \
     --observation ${GNAT_OBSERVATION_TAG} \
     --input ${GNAT_INPUT_DIR} \
     --output ${GNAT_OUTPUT_DIR} \

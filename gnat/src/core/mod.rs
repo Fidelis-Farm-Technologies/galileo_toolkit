@@ -6,9 +6,7 @@
  * See license information in LICENSE.
  */
 
- pub mod aggregate;
- pub mod bin;
+ pub mod batch;
  pub mod collect;
  pub mod export;
  pub mod import;
- pub mod questdb;

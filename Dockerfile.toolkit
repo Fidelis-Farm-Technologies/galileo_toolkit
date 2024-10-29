@@ -6,17 +6,9 @@ WORKDIR /builder
 COPY . .
 
 #
-# pytorch
-#
-ENV LIBTORCH=/base/libtorch
-ENV LIBTORCH_INCLUDE=/base/libtorch
-ENV LIBTORCH_LIB=/base/libtorch
-ENV LD_LIBRARY_PATH=/base/libtorch
-
-#
 # build gnat_flow
 #
-WORKDIR /builder/gnat_flow
+WORKDIR /builder/gnat
 RUN cargo build --release
 
 #
@@ -28,8 +20,12 @@ RUN cargo build --release
 #
 # build gnat_detect
 #
-WORKDIR /builder/gnat_detect
-RUN cargo build --release
+ENV LIBTORCH=/base/libtorch
+ENV LIBTORCH_INCLUDE=/base/libtorch
+ENV LIBTORCH_LIB=/base/libtorch
+ENV LD_LIBRARY_PATH=/base/libtorch
+#WORKDIR /builder/gnat_ai
+#RUN cargo build --release
 
 #
 # Update the LD_LIBRARY_PATH

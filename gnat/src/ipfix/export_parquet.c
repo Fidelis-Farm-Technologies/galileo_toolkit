@@ -403,11 +403,11 @@ static int AppendIpfixRecord(duckdb_appender appender,
             result = MMDB_lookup_string(country_mmdb, sabuf, &gai_error, &mmdb_error);
             if (gai_error)
             {
-                fprintf(stderr, "%s: Country getaddrinfo failed: %s", __FUNCTION__, gai_strerror(gai_error));
+                fprintf(stderr, "%s: country getaddrinfo failed: %s", __FUNCTION__, gai_strerror(gai_error));
             }
             else if (mmdb_error)
             {
-                fprintf(stderr, "%s: Country geopip lookup failed: %s", __FUNCTION__, MMDB_strerror(mmdb_error));
+                fprintf(stderr, "%s: country geopip lookup failed: %s", __FUNCTION__, MMDB_strerror(mmdb_error));
             }
             else if (result.found_entry)
             {
@@ -435,11 +435,11 @@ static int AppendIpfixRecord(duckdb_appender appender,
             result = MMDB_lookup_string(country_mmdb, dabuf, &gai_error, &mmdb_error);
             if (gai_error)
             {
-                fprintf(stderr, "%s: Country getaddrinfo failed: %s", __FUNCTION__, gai_strerror(gai_error));
+                fprintf(stderr, "%s: country getaddrinfo failed: %s", __FUNCTION__, gai_strerror(gai_error));
             }
             else if (mmdb_error)
             {
-                fprintf(stderr, "%s: Country geopip lookup failed: %s", __FUNCTION__, MMDB_strerror(mmdb_error));
+                fprintf(stderr, "%s: country geopip lookup failed: %s", __FUNCTION__, MMDB_strerror(mmdb_error));
             }
             else if (result.found_entry)
             {
@@ -477,11 +477,11 @@ static int AppendIpfixRecord(duckdb_appender appender,
                 MMDB_lookup_string(asn_mmdb, sabuf, &gai_error, &mmdb_error);
             if (gai_error)
             {
-                fprintf(stderr, "%s: Country getaddrinfo failed: %s", __FUNCTION__, gai_strerror(gai_error));
+                fprintf(stderr, "%s: asn getaddrinfo failed: %s", __FUNCTION__, gai_strerror(gai_error));
             }
             else if (mmdb_error)
             {
-                fprintf(stderr, "%s: Country geopip lookup failed: %s", __FUNCTION__, MMDB_strerror(mmdb_error));
+                fprintf(stderr, "%s: asn geopip lookup failed: %s", __FUNCTION__, MMDB_strerror(mmdb_error));
             }
             else if (result.found_entry)
             {
@@ -523,11 +523,11 @@ static int AppendIpfixRecord(duckdb_appender appender,
                 MMDB_lookup_string(asn_mmdb, dabuf, &gai_error, &mmdb_error);
             if (gai_error)
             {
-                fprintf(stderr, "%s: Country getaddrinfo failed: %s", __FUNCTION__, gai_strerror(gai_error));
+                fprintf(stderr, "%s: country getaddrinfo failed: %s", __FUNCTION__, gai_strerror(gai_error));
             }
             else if (mmdb_error)
             {
-                fprintf(stderr, "%s: Country geopip lookup failed: %s", __FUNCTION__, MMDB_strerror(mmdb_error));
+                fprintf(stderr, "%s: country geopip lookup failed: %s", __FUNCTION__, MMDB_strerror(mmdb_error));
             }
             else if (result.found_entry)
             {
@@ -587,20 +587,24 @@ static int WriteIpfixRecord(const char *observation,
                             MMDB_s *asn_mmdb,
                             MMDB_s *country_mmdb)
 {
-    if (flow->protocolIdentifier > 0)
+    if ((flow->protocolIdentifier == 0) && (flow->destinationIPv4Address == 0))
     {
-        if (AppendIpfixRecord(appender, observation, ndpi_ctx, flow, asn_mmdb, country_mmdb) < 0)
-        {
-            return -1;
-        }
-
-        if (duckdb_appender_end_row(appender) == DuckDBError)
-        {
-            fprintf(stderr, "%s: %s\n", __FUNCTION__, duckdb_appender_error(appender));
-            return -1;
-        }
+        // skip IPv6 Hop-by-Hop Option
+        return 0;
     }
-    return 0;
+
+    if (AppendIpfixRecord(appender, observation, ndpi_ctx, flow, asn_mmdb, country_mmdb) < 0)
+    {
+        fprintf(stderr, "%s: AppendIpfixRecord error\n", __FUNCTION__);
+        return -1;
+    }
+
+    if (duckdb_appender_end_row(appender) == DuckDBError)
+    {
+        fprintf(stderr, "%s: %s\n", __FUNCTION__, duckdb_appender_error(appender));
+        return -1;
+    }
+    return 1;
 }
 
 // ------------------------------------------------------------------------------------------------------
@@ -615,56 +619,12 @@ OpenFileSink(
     uint32_t *flags,
     GError **err)
 {
+    // fprintf(stderr, "%s\n", __FUNCTION__);
     do
     {
         GNAT_CONTEXT *gnat = (GNAT_CONTEXT *)ctx;
         if (!gnat)
             break;
-
-        // initialize ndpi
-        {
-            gnat->ndpi_ctx = ndpi_init_detection_module(0);
-            if (gnat->ndpi_ctx == NULL)
-            {
-                fprintf(stderr, "%s: ndpi_init_detection_module() failed\n", __FUNCTION__);
-                break;
-            }
-
-            NDPI_PROTOCOL_BITMASK protos;
-            NDPI_BITMASK_SET_ALL(protos);
-            ndpi_set_protocol_detection_bitmask2(gnat->ndpi_ctx, &protos);
-            ndpi_finalize_initialization(gnat->ndpi_ctx);
-        }
-
-        // GeoIP stuff
-        {
-            //
-            // maxmind ASN
-            //
-            memset(&gnat->asn_mmdb, 0, sizeof(gnat->asn_mmdb));
-            if (gnat->asn_file && strlen(gnat->asn_file))
-            {
-                if (MMDB_SUCCESS != MMDB_open(gnat->asn_file, MMDB_MODE_MMAP, &gnat->asn_mmdb))
-                {
-                    fprintf(stderr, "%s: failed to load geolite - asn: %s\n", __FUNCTION__, gnat->asn_file);
-                    break;
-                }
-                gnat->asn_mmdb_ptr = &gnat->asn_mmdb;
-            }
-            //
-            // maxmind Country
-            //
-            memset(&gnat->country_mmdb, 0, sizeof(gnat->country_mmdb));
-            if (gnat->country_file && strlen(gnat->country_file))
-            {
-                if (MMDB_SUCCESS != MMDB_open(gnat->country_file, MMDB_MODE_MMAP, &gnat->country_mmdb))
-                {
-                    fprintf(stderr, "%s: failed to load geolite - country: %s\n", __FUNCTION__, gnat->country_file);
-                    break;
-                }
-                gnat->country_mmdb_ptr = &gnat->country_mmdb;
-            }
-        }
 
         //
         //  initialize duckdb
@@ -728,10 +688,11 @@ RotateFileSink(MIOSource *source,
                uint32_t *flags,
                GError **err)
 {
+    fprintf(stderr, "%s\n", __FUNCTION__);
     gboolean status = FALSE;
-    char file_name[PATH_MAX / 2];
+    char file_name[PATH_MAX + 1];
     char tmp_file[(PATH_MAX * 2) + 1];
-    char parquet_file[PATH_MAX];
+    char parquet_file[(PATH_MAX * 2) + 1];
     char parquet_export_command[(PATH_MAX * 3) + 1];
 
     do
@@ -744,7 +705,7 @@ RotateFileSink(MIOSource *source,
         {
             break;
         }
-        if (!gnat->output_dir || strlen(gnat->output_dir) <= 0)
+        if (strlen(gnat->output_dir))
         {
             fprintf(stderr, "%s: missing output specifier\n", __FUNCTION__);
             break;
@@ -796,11 +757,12 @@ CloseFileSink(
     uint32_t *flags,
     GError **err)
 {
+    // fprintf(stderr, "%s\n", __FUNCTION__);
     gboolean status = FALSE;
-    char file_name[PATH_MAX / 2];
-    char tmp_file[(PATH_MAX * 2) + 1];
-    char parquet_file[PATH_MAX];
-    char parquet_export_command[(PATH_MAX * 3) + 1];
+    char file_name[PATH_MAX + 1];
+    char tmp_file[(PATH_MAX * 3) + 1];
+    char parquet_file[(PATH_MAX * 4) + 1];
+    char parquet_export_command[(PATH_MAX * 5) + 1];
     do
     {
         GNAT_CONTEXT *gnat = (GNAT_CONTEXT *)ctx;
@@ -810,15 +772,12 @@ CloseFileSink(
         duckdb_appender_flush(gnat->appender);
         duckdb_appender_destroy(&gnat->appender);
 
-        if (gnat->output_dir && strlen(gnat->output_dir))
+        if (strlen(gnat->output_dir))
         {
             snprintf(file_name, sizeof(file_name) - 1, ".%s.%u", gnat->observation, gnat->outtime);
             snprintf(tmp_file, sizeof(tmp_file) - 1, "%s/%s", gnat->output_dir, file_name);
             snprintf(parquet_file, sizeof(parquet_file) - 1, "%s/gnat%s.parquet", gnat->output_dir, file_name);
             snprintf(parquet_export_command, sizeof(parquet_export_command) - 1, " COPY (SELECT * FROM flow) TO '%s' (FORMAT 'parquet', CODEC 'snappy', ROW_GROUP_SIZE 100_000);", tmp_file);
-
-            // fprintf(stderr, "%s: input [%s]\n", __FUNCTION__, input_file);
-            fprintf(stderr, "%s: output [%s]\n", __FUNCTION__, parquet_file);
         }
         else
         {
@@ -848,22 +807,10 @@ CloseFileSink(
         if (gnat->db)
             duckdb_close(&gnat->db);
 
-        if (gnat->asn_mmdb_ptr)
-        {
-            MMDB_close(&gnat->asn_mmdb);
-        }
-        if (gnat->country_mmdb_ptr)
-        {
-            MMDB_close(&gnat->country_mmdb);
-        }
-
-        if (gnat->ndpi_ctx)
-            ndpi_exit_detection_module(gnat->ndpi_ctx);
-
-        if (gnat->ipfix_flows > 0)
-            printf("%s: records [%lu]\n", __FUNCTION__, gnat->ipfix_flows);
-        else
-            printf("%s: error [%lu]\n", __FUNCTION__, gnat->ipfix_flows);
+        // if (gnat->ipfix_flows > 0)
+        //     printf("%s: records [%lu]\n", __FUNCTION__, gnat->ipfix_flows);
+        // else
+        //     printf("%s: error [%lu]\n", __FUNCTION__, gnat->ipfix_flows);
 
         status = TRUE;
     } while (0);
@@ -882,45 +829,50 @@ ReaderToFileSink(
     GError **err)
 {
     GNAT_CONTEXT *gnat = (GNAT_CONTEXT *)ctx;
-
+    // fprintf(stderr, "%s:\n", __FUNCTION__);
     /* presume our buffer is ready and process a flow */
     YAF_FLOW_RECORD ipfix_record;
     size_t yaf_rec_len = sizeof(ipfix_record);
     while (fBufNext(gnat->input_buf, (uint8_t *)&ipfix_record, &yaf_rec_len, err))
     {
-        if (WriteIpfixRecord(gnat->observation,
-                             gnat->appender,
-                             gnat->ndpi_ctx,
-                             &ipfix_record,
-                             &gnat->asn_mmdb,
-                             &gnat->country_mmdb) < 0)
-
+        int status = WriteIpfixRecord(gnat->observation,
+                                      gnat->appender,
+                                      gnat->ndpi_ctx,
+                                      &ipfix_record,
+                                      gnat->asn_mmdb_ptr,
+                                      gnat->country_mmdb_ptr);
+        if (status < 0)
         {
+            fprintf(stderr, "%s: error\n", __FUNCTION__);
             gnat->ipfix_flows = -1;
             sink->active = FALSE;
             *flags |= (MIO_F_CTL_SINKCLOSE | MIO_F_CTL_ERROR);
             return FALSE;
         }
-        ++gnat->ipfix_flows;
+        else if (status > 0)
+        {
+            ++gnat->ipfix_flows;
+        }
+        else
+        {
+            ++gnat->ipfix_flows_skipped;
+        }
         memset(&ipfix_record, 0, yaf_rec_len);
-        fprintf(stderr, "%s:\n", __FUNCTION__);
     }
 
     if (g_error_matches(*err, FB_ERROR_DOMAIN, FB_ERROR_EOF))
     {
         /* EOF on a single collector not an issue. */
-        sink->active = FALSE;
-        *flags |= (MIO_F_CTL_SINKCLOSE);
+        *flags |= (MIO_F_CTL_SINKCLOSE | MIO_F_CTL_TERMINATE);
         g_clear_error(err);
         return TRUE;
     }
-    else
-    {
-        /* bad message */
-        sink->active = FALSE;
-        *flags |= (MIO_F_CTL_SINKCLOSE | MIO_F_CTL_ERROR);
-        return FALSE;
-    }
+
+    fprintf(stderr, "%s: bad message\n", __FUNCTION__);
+    /* bad message */
+    sink->active = FALSE;
+    *flags |= (MIO_F_CTL_SINKCLOSE | MIO_F_CTL_TERMINATE | MIO_F_CTL_ERROR);
+    return FALSE;
 }
 
 gboolean

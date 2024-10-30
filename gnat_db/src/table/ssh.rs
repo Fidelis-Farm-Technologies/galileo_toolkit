@@ -19,7 +19,7 @@ impl TableTrait for SshTable {
         self.table_name
     }
     fn create(&self, api_url: &String) {
-        println!("creating table: {} {}", api_url, self.table_name);
+        //println!("creating table: {} {}", api_url, self.table_name);
 
         let sql_create_table = format!(
             "CREATE TABLE IF NOT EXISTS {}(
@@ -29,7 +29,7 @@ impl TableTrait for SshTable {
                 count LONG,
                 timestamp TIMESTAMP) 
                 TIMESTAMP(timestamp) PARTITION BY HOUR;",
-                self.table_name
+            self.table_name
         );
 
         //
@@ -39,7 +39,7 @@ impl TableTrait for SshTable {
             .expect("invalid url params");
 
         match reqwest::blocking::get(url) {
-            Ok(r) => println!("verified {} table: {:?}", self.table_name, r.status()),
+            Ok(r) => println!("Database importer: verified {} table: {:?}", self.table_name, r.status()),
             Err(e) => panic!("Error: creating {} table - {:?}", self.table_name, e),
         };
     }
@@ -47,15 +47,18 @@ impl TableTrait for SshTable {
         //
         // query DuckDB memtable
         //
-        let mut stmt = source.prepare("SELECT time_bucket (INTERVAL '1' minute, stime) as bucket,
+        let mut stmt = source
+            .prepare(
+                "SELECT time_bucket (INTERVAL '1' minute, stime) as bucket,
                                             observ,
-                                            ssh,
+                                            appid,
                                             count() 
                                         FROM memtable 
                                         WHERE starts_with(appid,'ssh')
                                         GROUP BY all 
-                                        ORDER BY all
-                                        LIMIT 1024;").unwrap();
+                                        ORDER BY all;",
+            )
+            .unwrap();
 
         let record_iter = stmt
             .query_map([], |row| {
@@ -67,18 +70,18 @@ impl TableTrait for SshTable {
                 })
             })
             .unwrap();
-
+        let mut count = 0;
         let mut buffer = Buffer::new();
         for r in record_iter {
             let record = r.unwrap();
             let _ = buffer
                 .table(self.table_name)
                 .unwrap()
-                .column_ts("bucket", TimestampMicros::new(record.bucket * 60000000))
-                .unwrap()
                 .symbol("observ", record.observ)
                 .unwrap()
                 .symbol("ssh", record.ssh)
+                .unwrap()
+                .column_ts("bucket", TimestampMicros::new(record.bucket))
                 .unwrap()
                 .column_i64("count", record.count)
                 .unwrap()
@@ -87,6 +90,11 @@ impl TableTrait for SshTable {
             if buffer.len() >= (104857600 - 1048576) {
                 sink.flush(&mut buffer).unwrap();
             }
+            count += 1;
+        }
+        if count > 0 {
+            sink.flush(&mut buffer).unwrap();
+            println!("Table [{}]: {} new records", self.table_name, count);
         }
     }
 }

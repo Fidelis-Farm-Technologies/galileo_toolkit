@@ -6,9 +6,8 @@
  * See license information in LICENSE.
  */
 use clap::Parser;
-use std::path::Path;
 use gnat::core::import::import;
-
+use std::path::Path;
 
 #[derive(Debug, Parser)]
 #[command(version, about, long_about = None)]
@@ -20,7 +19,7 @@ struct Args {
     output: String,
 
     #[arg(long)]
-    observation: Option<String>,
+    observation: String,
 
     #[arg(long)]
     processed: Option<String>,
@@ -46,7 +45,7 @@ fn main() {
     let input_spec = args.input.clone();
     let output_spec = args.output.clone();
     let processed_spec = args.processed.unwrap_or(String::new()).clone();
-    let observation = args.observation.unwrap().clone();
+    let observation = args.observation.clone();
     let asn = args.asn.unwrap_or(String::new()).clone();
     let country = args.country.unwrap_or(String::new()).clone();
     let polling = args.polling.unwrap_or(false).clone();

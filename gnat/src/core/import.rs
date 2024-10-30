@@ -6,7 +6,7 @@
  * See license information in LICENSE.
  */
 
-use crate::ipfix::libfixbuf::safe_ipfix_file_import;
+use crate::ipfix::libfixbuf::unsafe_ipfix_file_import;
 
 use std::fs;
 use std::path::Path;
@@ -31,7 +31,7 @@ pub fn import(
     println!("\tpolling: {}", polling);
 
     if Path::new(input_spec).is_file() {
-        let status = safe_ipfix_file_import(
+        let status = unsafe_ipfix_file_import(
             &observation_tag,
             &input_spec,
             &output_spec,
@@ -43,7 +43,7 @@ pub fn import(
             std::process::exit(exitcode::DATAERR);
         }
     } else {
-        let poll_interval = Duration::from_millis(1000);
+        let poll_interval = Duration::from_secs(1);
         println!("import scanner: running [{}]", input_spec);
         loop {
             let mut counter = 0;
@@ -59,8 +59,8 @@ pub fn import(
                     if Path::new(lock_path.as_str()).exists() {
                         continue;
                     }
-                    println!("import scanner: processing [{}]", src_path);
-                    let status = safe_ipfix_file_import(
+                    //println!("import scanner: processing [{}]", src_path);
+                    let status = unsafe_ipfix_file_import(
                         &observation_tag,
                         &src_path,
                         &output_spec,
@@ -83,6 +83,8 @@ pub fn import(
                                 panic!("error: moving {} -> {}: {:?}", src_path, processed_path, e)
                             }
                         };
+                    } else {
+                        fs::remove_file(src_path.clone()).unwrap();
                     }
                     counter += 1;
                 }

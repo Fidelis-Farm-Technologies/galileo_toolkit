@@ -5,7 +5,7 @@
  * All Rights Reserved.
  * See license information in LICENSE.
  */
-use crate::ipfix::libfixbuf::safe_ifpix_socket_import;
+use crate::ipfix::libfixbuf::unsafe_ifpix_socket_import;
 
 pub fn collect(
     observation_tag: &String,
@@ -45,7 +45,7 @@ pub fn collect(
     println!("\tcountry file: {}", country_spec);
     println!("\rotate_interval: {}", rotate_interval);
 
-    let status = safe_ifpix_socket_import(
+    let status = unsafe_ifpix_socket_import(
         &observation_tag,
         &host_spec,
         &port_spec,

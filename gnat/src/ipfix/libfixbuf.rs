@@ -42,7 +42,7 @@ extern "C" {
 }
 
 
-pub fn safe_ipfix_file_import(
+pub fn unsafe_ipfix_file_import(
     observation: &String,
     input_file: &String,
     output_file: &String,
@@ -65,7 +65,7 @@ pub fn safe_ipfix_file_import(
     };
 }
 
-pub fn safe_ifpix_socket_import(
+pub fn unsafe_ifpix_socket_import(
     observation_tag: &String,
     host_spec: &String,
     port_spec: &String,

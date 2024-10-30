@@ -20,6 +20,9 @@ struct Args {
 
     #[arg(long)]
     output: String,
+
+    #[arg(long)]
+    tag: Option<String>,
 }
 
 fn main() {
@@ -27,7 +30,7 @@ fn main() {
     let input_spec = args.input.clone();
     let output_spec = args.output.clone();
     let interval_spec = args.interval.clone();
-
+    let tag_spec = args.tag.unwrap_or("gnat".to_string()).clone();
     //
     // verify the combination of arguments are valid
     //
@@ -46,5 +49,5 @@ fn main() {
         std::process::exit(exitcode::CONFIG)
     }
 
-    let _ = batch(interval_spec, input_spec, output_spec);
+    let _ = batch(tag_spec, interval_spec, input_spec, output_spec);
 }

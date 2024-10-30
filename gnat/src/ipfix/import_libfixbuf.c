@@ -36,7 +36,7 @@ static int processYafStatsRecord(const FILE *output_fp, const YAF_STATS_RECORD *
 }
 #endif
 
-static fbConnSpec_t collector_spec = FB_CONNSPEC_INIT;
+static fbConnSpec_t g_collector_spec = FB_CONNSPEC_INIT;
 
 static gboolean
 ycNewConnection(
@@ -72,10 +72,9 @@ ycOpenListener(
 
         gnat->template = fbTemplateAlloc(gnat->model);
         if (gnat->template == NULL)
-            break;
 
-        if (fbTemplateAppendSpecArray(gnat->template, g_yaf_flow_spec, YTF_ALL, err) == FALSE)
-            break;
+            if (fbTemplateAppendSpecArray(gnat->template, g_yaf_flow_spec, YTF_ALL, err) == FALSE)
+                break;
 
         gnat->session = fbSessionAlloc(gnat->model);
         if (gnat->session == NULL)
@@ -121,7 +120,54 @@ ycOpenListener(
         return FALSE;
     }
 
-    return TRUE;
+    // initialize ndpi
+
+    do
+    {
+        gnat->ndpi_ctx = ndpi_init_detection_module(0);
+        if (gnat->ndpi_ctx == NULL)
+        {
+            fprintf(stderr, "%s: ndpi_init_detection_module() failed\n", __FUNCTION__);
+            break;
+        }
+
+        NDPI_PROTOCOL_BITMASK protos;
+        NDPI_BITMASK_SET_ALL(protos);
+        ndpi_set_protocol_detection_bitmask2(gnat->ndpi_ctx, &protos);
+        ndpi_finalize_initialization(gnat->ndpi_ctx);
+
+        // GeoIP stuff
+
+        //
+        // maxmind ASN
+        //
+        memset(&gnat->asn_mmdb, 0, sizeof(gnat->asn_mmdb));
+        if (strlen(gnat->asn_file))
+        {
+            if (MMDB_SUCCESS != MMDB_open(gnat->asn_file, MMDB_MODE_MMAP, &gnat->asn_mmdb))
+            {
+                fprintf(stderr, "%s: failed to load geolite - asn: %s\n", __FUNCTION__, gnat->asn_file);
+                break;
+            }
+            gnat->asn_mmdb_ptr = &gnat->asn_mmdb;
+        }
+        //
+        // maxmind Country
+        //
+        memset(&gnat->country_mmdb, 0, sizeof(gnat->country_mmdb));
+        if (strlen(gnat->country_file))
+        {
+            if (MMDB_SUCCESS != MMDB_open(gnat->country_file, MMDB_MODE_MMAP, &gnat->country_mmdb))
+            {
+                fprintf(stderr, "%s: failed to load geolite - country: %s\n", __FUNCTION__, gnat->country_file);
+                break;
+            }
+            gnat->country_mmdb_ptr = &gnat->country_mmdb;
+        }
+        return TRUE;
+    } while (0);
+    fprintf(stderr, "%s: failed\n", __FUNCTION__);
+    return FALSE;
 }
 
 static gboolean
@@ -134,18 +180,33 @@ ycCloseListener(
     GNAT_CONTEXT *gnat = (GNAT_CONTEXT *)ctx;
     if (gnat)
     {
-        if (gnat->collector)
-            fbCollectorClose(gnat->collector);
-        if (gnat->template)
-            fbTemplateFreeUnused(gnat->template);
-        if (gnat->model)
-            fbInfoModelFree(gnat->model);
-        if (gnat->input_buf)
-            fBufFree(gnat->input_buf);
+        if (gnat->asn_mmdb_ptr)
+            MMDB_close(&gnat->asn_mmdb);
+
+        if (gnat->country_mmdb_ptr)
+            MMDB_close(&gnat->country_mmdb);
+
+        if (gnat->ndpi_ctx)
+            ndpi_exit_detection_module(gnat->ndpi_ctx);
+
         if (gnat->listener)
             fbListenerFree(gnat->listener);
+
+        if (gnat->collector)
+            fbCollectorClose(gnat->collector);
+
+        if (gnat->template)
+            fbTemplateFreeUnused(gnat->template);
+
+        if (gnat->model)
+            fbInfoModelFree(gnat->model);
+
+        if (gnat->input_buf)
+            fBufFree(gnat->input_buf);
+
         return TRUE;
     }
+    fprintf(stderr, "%s: failed\n", __FUNCTION__);
     return FALSE;
 }
 
@@ -156,7 +217,6 @@ ycOpenReader(
     uint32_t *flags,
     GError **err)
 {
-    fprintf(stderr, "%s:\n", __FUNCTION__);
     GNAT_CONTEXT *gnat = (GNAT_CONTEXT *)ctx;
     do
     {
@@ -179,7 +239,7 @@ ycOpenReader(
         if (!fbSessionAddTemplate(gnat->session, TRUE, YAF_FLOW_FULL_TID, gnat->template, NULL, err))
             break;
 
-        if (!gnat->input_file || (strlen(gnat->input_file) == 0))
+        if (strlen(gnat->input_file) == 0)
         {
             fprintf(stderr, "%s: missing input file specifier\n", __FUNCTION__);
             break;
@@ -187,18 +247,29 @@ ycOpenReader(
 
         gnat->collector = fbCollectorAllocFile(NULL, gnat->input_file, err);
         if (gnat->collector == NULL)
+        {
+            fprintf(stderr, "%s: unable to open %s\n", __FUNCTION__, gnat->input_file);
             break;
-
+        }
         gnat->input_buf = fBufAllocForCollection(gnat->session, gnat->collector);
         if (gnat->input_buf == NULL)
+        {
+            fprintf(stderr, "%s: unable to allocate buffer\n", __FUNCTION__);
             break;
-
+        }
         if (!fBufSetInternalTemplate(gnat->input_buf, YAF_FLOW_FULL_TID, err))
+        {
+            fprintf(stderr, "%s: unable to set template\n", __FUNCTION__);
             break;
+        }
+
     } while (0);
 
     if (!gnat->input_buf)
     {
+        if (gnat->input_buf)
+            fBufFree(gnat->input_buf);
+        gnat->input_buf = NULL;
         if (gnat->collector)
             fbCollectorClose(gnat->collector);
         gnat->collector = NULL;
@@ -207,15 +278,58 @@ ycOpenReader(
         gnat->template = NULL;
         if (gnat->model)
             fbInfoModelFree(gnat->model);
-        gnat->model = NULL;
-        if (gnat->input_buf)
-            fBufFree(gnat->input_buf);
-        gnat->input_buf = NULL;
+        gnat->model = NULL;        
         *flags |= (MIO_F_CTL_ERROR | MIO_F_CTL_TERMINATE);
         return FALSE;
     }
 
-    return TRUE;
+    // initialize ndpi
+    do
+    {
+        gnat->ndpi_ctx = ndpi_init_detection_module(0);
+        if (gnat->ndpi_ctx == NULL)
+        {
+            fprintf(stderr, "%s: ndpi_init_detection_module() failed\n", __FUNCTION__);
+            break;
+        }
+
+        NDPI_PROTOCOL_BITMASK protos;
+        NDPI_BITMASK_SET_ALL(protos);
+        ndpi_set_protocol_detection_bitmask2(gnat->ndpi_ctx, &protos);
+        ndpi_finalize_initialization(gnat->ndpi_ctx);
+
+        // GeoIP stuff
+
+        //
+        // maxmind ASN
+        //
+        memset(&gnat->asn_mmdb, 0, sizeof(gnat->asn_mmdb));
+        if (strlen(gnat->asn_file))
+        {
+            if (MMDB_SUCCESS != MMDB_open(gnat->asn_file, MMDB_MODE_MMAP, &gnat->asn_mmdb))
+            {
+                fprintf(stderr, "%s: failed to load geolite - asn: %s\n", __FUNCTION__, gnat->asn_file);
+                break;
+            }
+            gnat->asn_mmdb_ptr = &gnat->asn_mmdb;
+        }
+        //
+        // maxmind Country
+        //
+        memset(&gnat->country_mmdb, 0, sizeof(gnat->country_mmdb));
+        if (strlen(gnat->country_file))
+        {
+            if (MMDB_SUCCESS != MMDB_open(gnat->country_file, MMDB_MODE_MMAP, &gnat->country_mmdb))
+            {
+                fprintf(stderr, "%s: failed to load geolite - country: %s\n", __FUNCTION__, gnat->country_file);
+                break;
+            }
+            gnat->country_mmdb_ptr = &gnat->country_mmdb;
+        }
+        return TRUE;
+    } while (0);
+    fprintf(stderr, "%s: failed\n", __FUNCTION__);
+    return FALSE;
 }
 
 static gboolean
@@ -225,20 +339,33 @@ ycCloseReader(
     uint32_t *flags,
     GError **err)
 {
-    fprintf(stderr, "%s:\n", __FUNCTION__);
     GNAT_CONTEXT *gnat = (GNAT_CONTEXT *)ctx;
     if (gnat)
     {
+        if (gnat->asn_mmdb_ptr)
+            MMDB_close(&gnat->asn_mmdb);
+
+        if (gnat->country_mmdb_ptr)
+            MMDB_close(&gnat->country_mmdb);
+
+        if (gnat->ndpi_ctx)
+            ndpi_exit_detection_module(gnat->ndpi_ctx);
+
         if (gnat->collector)
             fbCollectorClose(gnat->collector);
+
         if (gnat->template)
             fbTemplateFreeUnused(gnat->template);
+            
         if (gnat->model)
             fbInfoModelFree(gnat->model);
+
         if (gnat->input_buf)
             fBufFree(gnat->input_buf);
+
         return TRUE;
     }
+    fprintf(stderr, "%s: failed\n", __FUNCTION__);
     return FALSE;
 }
 
@@ -257,11 +384,11 @@ int libfixbuf_file_import(
     MIOAppDriver adrv;
     uint32_t miodflags = 0;
 
-    fprintf(stderr, "%s:\n", __FUNCTION__);
+    fprintf(stdout, "%s: processing [%s] %s\n", __FUNCTION__, observation, input_file);
+    memset(&gnat, 0, sizeof(GNAT_CONTEXT));
     memset(&source, 0, sizeof(MIOSource));
     memset(&sink, 0, sizeof(MIOSink));
     memset(&adrv, 0, sizeof(MIOAppDriver));
-    memset(&gnat, 0, sizeof(GNAT_CONTEXT));
 
     /* set up logging */
     if (!logc_setup(&err))
@@ -274,9 +401,10 @@ int libfixbuf_file_import(
     gnat.input_buf_ready = FALSE;
     gnat.outtime = 0;
     gnat.input_file = strdup(input_file);
+    gnat.output_dir = strdup(output_dir);
     gnat.asn_file = strdup(asn_file);
     gnat.country_file = strdup(country_file);
-    gnat.observation = (observation != NULL ? strdup(observation) : strdup("gnat"));
+    gnat.observation = strdup(observation);
 
     /* set up an app driver */
     adrv.app_open_source = ycOpenReader;
@@ -293,7 +421,7 @@ int libfixbuf_file_import(
         air_opterr("libfixbuf_file_import: cannot set up MIO input: %s", err->message);
     }
 
-    g_message("libfixbuf_file_import: processing %s", input_file);
+    g_message("libfixbuf_file_import: processing %s\n", input_file);
     /* do dispatch here */
     if (!mio_dispatch_loop(&source,
                            &sink,
@@ -307,17 +435,21 @@ int libfixbuf_file_import(
         rv = 1;
     }
 
-    g_message("libfixbuf_file_import: shutting down");
-    if (gnat.observation)
-        free(gnat.observation);
     if (gnat.input_file)
         free(gnat.input_file);
+    if (gnat.output_dir)
+        free(gnat.output_dir);
     if (gnat.asn_file)
         free(gnat.asn_file);
     if (gnat.country_file)
         free(gnat.country_file);
+    if (gnat.observation)
+        free(gnat.observation);
 
-    g_message("libfixbuf_file_import: processed %lu flows into %lu files", gnat.ipfix_flows, gnat.ipfix_files);
+    g_message("libfixbuf_file_import: shutting down");
+
+    fprintf(stdout, "%s: processed %llu flows [skipped %llu IPv6 Hop-by-Hop]\n", __FUNCTION__, (long long)gnat.ipfix_flows, (long long)gnat.ipfix_flows_skipped);
+
     return rv;
 }
 
@@ -412,9 +544,10 @@ int libfixbuf_socket_import(
     gnat.input_buf = NULL;
     gnat.input_buf_ready = FALSE;
     gnat.outtime = 0;
+    gnat.output_dir = strdup(output_dir);
     gnat.asn_file = strdup(asn_file);
     gnat.country_file = strdup(country_file);
-    gnat.observation = (observation != NULL ? strdup(observation) : strdup("gnat"));
+    gnat.observation = strdup(observation);
     gnat.verbose = (verbose ? TRUE : FALSE);
     gnat.rotate_interval = (rotate_interval ? rotate_interval : 60);
 
@@ -450,26 +583,27 @@ int libfixbuf_socket_import(
     }
 
     g_message("libfixbuf_socket_import: shutting down");
-    if (collector_spec.host)
-        free(collector_spec.host);
-    if (collector_spec.svc)
-        free(collector_spec.svc);
-    if (collector_spec.ssl_ca_file)
-        free(collector_spec.ssl_ca_file);
-    if (collector_spec.ssl_cert_file)
-        free(collector_spec.ssl_cert_file);
-    if (collector_spec.ssl_key_file)
-        free(collector_spec.ssl_key_file);
-    if (collector_spec.ssl_key_pass)
-        free(collector_spec.ssl_key_pass);
-    if (gnat.observation)
-        free(gnat.observation);
-    if (gnat.input_file)
-        free(gnat.input_file);
+    if (g_collector_spec.host)
+        free(g_collector_spec.host);
+    if (g_collector_spec.svc)
+        free(g_collector_spec.svc);
+    if (g_collector_spec.ssl_ca_file)
+        free(g_collector_spec.ssl_ca_file);
+    if (g_collector_spec.ssl_cert_file)
+        free(g_collector_spec.ssl_cert_file);
+    if (g_collector_spec.ssl_key_file)
+        free(g_collector_spec.ssl_key_file);
+    if (g_collector_spec.ssl_key_pass)
+        free(g_collector_spec.ssl_key_pass);
+
+    if (gnat.output_dir)
+        free(gnat.output_dir);
     if (gnat.asn_file)
         free(gnat.asn_file);
     if (gnat.country_file)
         free(gnat.country_file);
+    if (gnat.observation)
+        free(gnat.observation);
 
     g_message("libfixbuf_socket_import: processed %lu flows into %lu files", gnat.ipfix_flows, gnat.ipfix_files);
     return rv;

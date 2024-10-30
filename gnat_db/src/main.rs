@@ -82,11 +82,10 @@ fn questdb_insert(
     let input_dir = Path::new(input_spec.as_str());
     if !env::set_current_dir(&input_dir).is_ok() {
         panic!(
-            "error: unable to set working directory to {}",
+            "Error: unable to set working directory to {}",
             input_dir.display()
         );
     }
-
     //
     // instantiate and load table objects
     //
@@ -132,7 +131,7 @@ fn questdb_insert(
     //
     let api_url = format!("http://{}:{}/exec", host_spec, api_port);
     let Ok(mut sink) = Sender::from_conf(format!("tcp::addr={}:{};", host_spec, ilp_port)) else {
-        panic!("Error: connectiong to QuestDB");
+        panic!("Error: connecting to QuestDB");
     };
 
     //
@@ -144,11 +143,13 @@ fn questdb_insert(
 
     let mut last = Utc::now();
     let sleep_interval = Duration::from_secs(polling_interval);
-    println!("File scanner: running [{}]", input_spec);
+    println!("Database importer: running [{}]", input_spec);
     loop {
         //
         // is it time to drop older days (partitions)?
         //
+        println!("Database importer: scanning...");
+
         let now = Utc::now();
         let duration = now.signed_duration_since(last);
         if duration.num_hours() > 0 {
@@ -165,11 +166,12 @@ fn questdb_insert(
             Ok(d) => d,
             Err(e) => panic!("Error: reading directory {} -- {:?}", input_spec, e),
         };
+
         let mut counter = 0;
+
         for entry in directory {
             let file = entry.unwrap();
             let filename = String::from(file.file_name().to_string_lossy());
-            let src_path = String::from(file.path().to_string_lossy());
 
             if let Ok(metadata) = file.metadata() {
                 if metadata.len() <= 0 {
@@ -178,14 +180,15 @@ fn questdb_insert(
                 }
             }
 
-            if filename.starts_with("gnat") && filename.ends_with(".parquet") {
+            if !filename.starts_with(".") && filename.ends_with(".parquet") {
+                println!("Database importer: processing {}", filename.clone());
                 // rename file so it isn't clobbered
-                let tmp_filename = format!(".{}", filename.clone());
+                let tmp_filename = format!(".gnat_db-{}", filename.clone());
                 fs::rename(filename.clone(), tmp_filename.clone()).unwrap();
 
                 let source = match Connection::open_in_memory() {
                     Ok(s) => s,
-                    Err(e) => panic!("error:  open_in_memory() - {}", e),
+                    Err(e) => panic!("Error: open_in_memory() - {}", e),
                 };
                 let sql_command = format!(
                     "CREATE TABLE memtable AS SELECT * FROM '{}';",
@@ -195,7 +198,7 @@ fn questdb_insert(
                 match source.execute_batch(&sql_command) {
                     Ok(c) => c,
                     Err(e) => {
-                        panic!("error: creating table from file {} - {:?}", tmp_filename, e);
+                        panic!("Error: creating table from file {} - {:?}", tmp_filename, e);
                     }
                 };
                 //
@@ -204,22 +207,23 @@ fn questdb_insert(
                 for table in table_list.iter() {
                     table.insert(&mut sink, &source);
                 }
+                
                 source.close().unwrap();
 
                 //
                 // move or remove the file
                 //
                 if !processed_spec.is_empty() {
-                    let processed_path = format!("{}/{}", &processed_spec, filename.to_string());
+                    let processed_path = format!("{}/{}", processed_spec, filename.to_string());
 
-                    match fs::rename(src_path.clone(), processed_path.clone()) {
+                    match fs::rename(tmp_filename.clone(), processed_path.clone()) {
                         Ok(c) => c,
                         Err(e) => {
-                            panic!("Error: moving {} -> {}: {:?}", src_path, processed_path, e)
+                            panic!("Error: moving {} -> {}: {:?}", tmp_filename, processed_path, e)
                         }
                     };
                 } else {
-                    fs::remove_file(src_path.clone()).unwrap();
+                    fs::remove_file(tmp_filename.clone()).unwrap();
                 }
                 counter += 1;
             }
@@ -237,7 +241,7 @@ fn questdb_insert(
 fn main() {
     let args = Args::parse();
 
-    let polling_interval: u64 = args.polling.unwrap_or(0);
+    let polling_interval: u64 = args.polling.unwrap_or(60);
     let input_spec: String = args.input.clone();
     let host_spec: String = args.host.clone();
     let ilp_port: u16 = args.ilp.unwrap_or(9009);
@@ -247,7 +251,7 @@ fn main() {
     let tables_spec: String = args.tables.unwrap_or(String::from("all")).clone();
 
     if !Path::new(&input_spec).is_dir() {
-        eprintln!("error: invalid --input directory {}", input_spec);
+        eprintln!("Error: invalid --input directory {}", input_spec);
         std::process::exit(exitcode::CONFIG)
     }
 

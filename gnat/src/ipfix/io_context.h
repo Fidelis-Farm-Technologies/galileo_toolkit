@@ -11,7 +11,6 @@ typedef struct gnatContext_st
 {
     uint32_t outtime;
     fBuf_t *input_buf;
-    char *input_file;
     FILE *input_fp;
     fbConnSpec_t connection_spec;
     fbListener_t *listener;
@@ -26,6 +25,7 @@ typedef struct gnatContext_st
     uint32_t rotate_interval;
     uint64_t ipfix_files;
     uint64_t ipfix_flows;
+    uint64_t ipfix_flows_skipped;
     gboolean verbose;
     duckdb_database db;
     duckdb_connection con;
@@ -36,6 +36,7 @@ typedef struct gnatContext_st
     MMDB_s *asn_mmdb_ptr;
     MMDB_s country_mmdb;
     MMDB_s *country_mmdb_ptr;
+    char *input_file;
     char *observation;
     char *asn_file;
     char *country_file;

@@ -6,7 +6,8 @@ use questdb::ingress::{Buffer, TimestampMicros, TimestampNanos};
 struct BytesRecord {
     bucket: i64,
     observ: String,
-    count: i64,
+    sbytes: i64,
+    dbytes: i64,    
 }
 
 pub struct BytesTable {
@@ -18,13 +19,12 @@ impl TableTrait for BytesTable {
         self.table_name
     }
     fn create(&self, api_url: &String) {
-        //println!("creating table: {} {}", api_url, self.table_name);
-
         let sql_create_table = format!(
             "CREATE TABLE IF NOT EXISTS {}(
                 bucket TIMESTAMP,
                 observ SYMBOL CAPACITY 64 INDEX,
-                count LONG,
+                sbytes LONG,
+                dbytes LONG,
                 timestamp TIMESTAMP) 
                 TIMESTAMP(timestamp) PARTITION BY HOUR;",
                 self.table_name
@@ -37,7 +37,7 @@ impl TableTrait for BytesTable {
             .expect("invalid url params");
 
         match reqwest::blocking::get(url) {
-            Ok(r) => println!("Database importer: verified {} table: {:?}", self.table_name, r.status()),
+            Ok(r) => println!("Database importer: verified [{}] table: {:?}", self.table_name, r.status()),
             Err(e) => panic!("Error: creating {} table - {:?}", self.table_name, e),
         };
     }
@@ -46,19 +46,18 @@ impl TableTrait for BytesTable {
         // query DuckDB memtable
         //
 
-        let mut stmt = source.prepare("SELECT time_bucket (INTERVAL '1' minute, stime) as bucket,
-                                            observ,
-                                            sum(bytes+rbytes),
-                                        FROM memtable 
-                                        GROUP BY all 
-                                        ORDER BY all;").unwrap();
+        let mut stmt = source.prepare("SELECT time_bucket (INTERVAL '1' minute, stime) as bucket,observ,sum(sbytes),sum(dbytes)
+                                                            FROM memtable 
+                                                            GROUP BY all 
+                                                            ORDER BY all;").unwrap();
 
         let record_iter = stmt
             .query_map([], |row| {
                 Ok(BytesRecord {
                     bucket: row.get(0).expect("missing bucket"),
                     observ: row.get(1).expect("missing observ"),
-                    count: row.get(2).expect("missing count"),
+                    sbytes: row.get(2).expect("missing sbytes"),
+                    dbytes: row.get(3).expect("missing dbytes"),                    
                 })
             })
             .unwrap();
@@ -73,8 +72,10 @@ impl TableTrait for BytesTable {
                 .unwrap()
                 .column_ts("bucket", TimestampMicros::new(record.bucket))
                 .unwrap()                
-                .column_i64("count", record.count)
+                .column_i64("sbytes", record.sbytes)
                 .unwrap()
+                .column_i64("dbytes", record.dbytes)
+                .unwrap()                
                 .at(TimestampNanos::now())
                 .unwrap();
             if buffer.len() >= (104857600 - 1048576) {

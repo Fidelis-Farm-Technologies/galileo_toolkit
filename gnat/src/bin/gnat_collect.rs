@@ -74,22 +74,22 @@ fn main() {
     //
 
     if !Path::new(&host_spec).is_dir() && !Path::new(&host_spec).is_file() {
-        eprintln!("error: invalid --host {}", host_spec);
+        eprintln!("Error: invalid --host {}", host_spec);
         std::process::exit(exitcode::CONFIG)
     }
 
     if Path::new(&host_spec).is_file() && !Path::new(&output_spec).is_file() {
-        eprintln!("error: --host <file spec> requires --output <file spec>");
+        eprintln!("Error: --host <file spec> requires --output <file spec>");
         std::process::exit(exitcode::CONFIG)
     }
 
     if Path::new(&host_spec).is_dir() && !Path::new(&output_spec).is_dir() {
-        eprintln!("error: --host <dir spec> requires --output <dir spec>");
+        eprintln!("Error: --host <dir spec> requires --output <dir spec>");
         std::process::exit(exitcode::CONFIG)
     }
 
     if !Path::new(&output_spec).is_dir() && !Path::new(&output_spec).is_file() {
-        eprintln!("error: invalid --output {}", output_spec);
+        eprintln!("Error: invalid --output {}", output_spec);
         std::process::exit(exitcode::CONFIG)
     }
 

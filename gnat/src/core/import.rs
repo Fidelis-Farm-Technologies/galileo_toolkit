@@ -8,6 +8,7 @@
 
 use crate::ipfix::libfixbuf::unsafe_ipfix_file_import;
 
+use std::env;
 use std::fs;
 use std::path::Path;
 use std::thread;
@@ -39,17 +40,26 @@ pub fn import(
             &country_spec,
         );
         if status < 0 {
-            eprintln!("error: processing {}", input_spec);
+            eprintln!("Error: processing {}", input_spec);
             std::process::exit(exitcode::DATAERR);
         }
     } else {
+
+        let input_dir = Path::new(input_spec.as_str());
+        if !env::set_current_dir(&input_dir).is_ok() {
+            panic!(
+                "Error: unable to set working directory to {}",
+                input_dir.display()
+            );
+        }
+
         let poll_interval = Duration::from_secs(1);
         println!("import scanner: running [{}]", input_spec);
         loop {
             let mut counter = 0;
             let mut processed_path;
 
-            for entry in fs::read_dir(input_spec)? {
+            for entry in fs::read_dir(".")? {
                 let file: fs::DirEntry = entry.unwrap();
                 let file_name = String::from(file.file_name().to_string_lossy());
                 let src_path = String::from(file.path().to_string_lossy());
@@ -69,7 +79,7 @@ pub fn import(
                     );
                     if status < 0 {
                         eprintln!(
-                            "error: processing {}; moving to {}",
+                            "Error: processing {}; moving to {}",
                             src_path, processed_spec
                         );
                         processed_path = format!("{}/{}.err", processed_spec, file_name);
@@ -80,7 +90,7 @@ pub fn import(
                         match fs::rename(src_path.clone(), processed_path.clone()) {
                             Ok(c) => c,
                             Err(e) => {
-                                panic!("error: moving {} -> {}: {:?}", src_path, processed_path, e)
+                                panic!("Error: moving {} -> {}: {:?}", src_path, processed_path, e)
                             }
                         };
                     } else {

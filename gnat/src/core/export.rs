@@ -16,7 +16,7 @@ use duckdb::Connection;
 pub fn export_file(input_spec: &String, output_spec: &String, format: &String) -> bool {
     let conn = match Connection::open_in_memory() {
         Ok(s) => s,
-        Err(e) => panic!("error:  open_in_memory() - {}", e),
+        Err(e) => panic!("Error:  open_in_memory() - {}", e),
     };
 
     let sql_command: String;
@@ -47,7 +47,7 @@ pub fn export_file(input_spec: &String, output_spec: &String, format: &String) -
     match conn.execute_batch(&sql_command) {
         Ok(c) => c,
         Err(e) => {
-            eprintln!("error: exporting file {} -- {:?}", input_spec, e);
+            eprintln!("Error: exporting file {} -- {:?}", input_spec, e);
             return false;
         }
     };
@@ -75,7 +75,7 @@ pub fn export(
             let mut counter = 0;
             let directory = match fs::read_dir(input_spec) {
                 Ok(d) => d,
-                Err(e) => panic!("error: reading directory {} -- {:?}", input_spec, e),
+                Err(e) => panic!("Error: reading directory {} -- {:?}", input_spec, e),
             };
 
             for entry in directory {
@@ -112,13 +112,13 @@ pub fn export(
                             match fs::rename(src_path.clone(), processed_path.clone()) {
                                 Ok(c) => c,
                                 Err(e) => panic!(
-                                    "error: moving {} -> {}: {:?}",
+                                    "Error: moving {} -> {}: {:?}",
                                     src_path, processed_path, e
                                 ),
                             };
                         }
                     } else {
-                        eprintln!("error: exporting {} => {}", src_path, dst_spec);
+                        eprintln!("Error: exporting {} => {}", src_path, dst_spec);
                         std::process::exit(exitcode::PROTOCOL);
                     }
                     counter += 1;

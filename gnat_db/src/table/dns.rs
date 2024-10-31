@@ -7,6 +7,7 @@ struct DnsRecord {
     bucket: i64,
     observ: String,
     dns: String,
+    daddr: String,
     count: i64,
 }
 
@@ -19,13 +20,12 @@ impl TableTrait for DnsTable {
         self.table_name
     }
     fn create(&self, api_url: &String) {
-        //println!("creating table: {} {}", api_url, self.table_name);
-
         let sql_create_table = format!(
             "CREATE TABLE IF NOT EXISTS {}(
                 bucket TIMESTAMP,
                 observ SYMBOL CAPACITY 64 INDEX,
                 dns SYMBOL CAPACITY 8192 INDEX,
+                daddr VARCHAR,
                 count LONG,
                 timestamp TIMESTAMP) 
                 TIMESTAMP(timestamp) PARTITION BY HOUR;",
@@ -39,7 +39,7 @@ impl TableTrait for DnsTable {
             .expect("invalid url params");
 
         match reqwest::blocking::get(url) {
-            Ok(r) => println!("Database importer: verified {} table: {:?}", self.table_name, r.status()),
+            Ok(r) => println!("Database importer: verified [{}] table: {:?}", self.table_name, r.status()),
             Err(e) => panic!("Error: creating {} table - {:?}", self.table_name, e),
         };
     }
@@ -50,6 +50,7 @@ impl TableTrait for DnsTable {
         let mut stmt = source.prepare("SELECT time_bucket (INTERVAL '1' minute, stime) as bucket,
                                             observ,
                                             appid,
+                                            daddr,
                                             count() 
                                         FROM memtable 
                                         WHERE starts_with(appid,'dns')
@@ -62,7 +63,8 @@ impl TableTrait for DnsTable {
                     bucket: row.get(0).expect("missing bucket"),
                     observ: row.get(1).expect("missing observ"),
                     dns: row.get(2).expect("missing dns"),
-                    count: row.get(3).expect("missing count"),
+                    daddr: row.get(3).expect("missing daddr"),
+                    count: row.get(4).expect("missing count"),
                 })
             })
             .unwrap();
@@ -78,7 +80,9 @@ impl TableTrait for DnsTable {
                 .symbol("dns", record.dns)
                 .unwrap()
                 .column_ts("bucket", TimestampMicros::new(record.bucket))
-                .unwrap()                
+                .unwrap()     
+                .column_str("daddr", record.daddr)
+                .unwrap()           
                 .column_i64("count", record.count)
                 .unwrap()
                 .at(TimestampNanos::now())

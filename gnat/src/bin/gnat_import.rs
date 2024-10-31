@@ -55,38 +55,38 @@ fn main() {
     //
 
     if output_spec.is_empty() {
-        eprintln!("error: --output <spec>  required",);
+        eprintln!("Error: --output <spec>  required",);
         std::process::exit(exitcode::CONFIG)
     }
 
     if !Path::new(&input_spec).is_dir() && !Path::new(&input_spec).is_file() {
-        eprintln!("error: invalid --input {}", input_spec);
+        eprintln!("Error: invalid --input {}", input_spec);
         std::process::exit(exitcode::CONFIG)
     }
 
     if Path::new(&input_spec).is_file() && !Path::new(&output_spec).is_file() {
-        eprintln!("error: --input <file spec> requires --output <file spec>");
+        eprintln!("Error: --input <file spec> requires --output <file spec>");
         std::process::exit(exitcode::CONFIG)
     }
 
     if Path::new(&input_spec).is_dir() && !Path::new(&output_spec).is_dir() {
-        eprintln!("error: --input <dir spec> requires --output <dir spec>");
+        eprintln!("Error: --input <dir spec> requires --output <dir spec>");
         std::process::exit(exitcode::CONFIG)
     }
 
     if !Path::new(&output_spec).is_dir() && !Path::new(&output_spec).is_file() {
-        eprintln!("error: invalid --output {}", output_spec);
+        eprintln!("Error: invalid --output {}", output_spec);
         std::process::exit(exitcode::CONFIG)
     }
 
     if polling == true && processed_spec.is_empty() {
-        eprintln!("error: --processed_dir <dir spec> required when polling is active");
+        eprintln!("Error: --processed_dir <dir spec> required when polling is active");
         std::process::exit(exitcode::CONFIG)
     }
 
     if !processed_spec.is_empty() && !Path::new(&processed_spec).is_dir() {
         eprintln!(
-            "error: --processed_dir {} is not a valid directory",
+            "Error: --processed_dir {} is not a valid directory",
             processed_spec
         );
         std::process::exit(exitcode::CONFIG)

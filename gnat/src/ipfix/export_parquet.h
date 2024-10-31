@@ -32,27 +32,27 @@
 #define FLOW_SCHEMA                                                                        \
     "CREATE TABLE flow ("                                                                  \
     "observ VARCHAR,stime TIMESTAMP,etime TIMESTAMP,dur UINTEGER,rtt UINTEGER, pcr FLOAT," \
-    "proto VARCHAR,addr VARCHAR,raddr VARCHAR,port USMALLINT,rport USMALLINT,"             \
+    "proto VARCHAR,saddr VARCHAR,daddr VARCHAR,sport USMALLINT,dport USMALLINT,"           \
     "iflags VARCHAR,uflags VARCHAR,"                                                       \
-    "tcpseq UINTEGER,rtcpseq UINTEGER,"                                                    \
-    "vlan USMALLINT,rvlan USMALLINT,"                                                      \
-    "pkts UBIGINT,rpkts UBIGINT,"                                                          \
-    "bytes UBIGINT,rbytes UBIGINT,"                                                        \
-    "entropy UTINYINT,rentropy UTINYINT,"                                                  \
-    "iat UBIGINT,riat UBIGINT,"                                                            \
-    "stdev UBIGINT,rstdev UBIGINT,"                                                        \
-    "tcpurg UINTEGER,rtcpurg UINTEGER,"                                                    \
-    "smallpktcnt UINTEGER,rsmallpktcnt UINTEGER,"                                          \
-    "largpktcnt UINTEGER,rlargpktcnt UINTEGER,"                                            \
-    "nonemptypktcnt UINTEGER,rnonemptypktcnt UINTEGER,"                                    \
-    "firstnonemptycnt USMALLINT,rfirstnonemptycnt USMALLINT,"                              \
-    "stdevpayload USMALLINT,rstdevpayload USMALLINT,"                                      \
-    "maxpktsize USMALLINT,rmaxpktsize USMALLINT,"                                          \
+    "stcpseq UINTEGER,dtcpseq UINTEGER,"                                                   \
+    "svlan USMALLINT,dvlan USMALLINT,"                                                     \
+    "spkts UBIGINT,dpkts UBIGINT,"                                                         \
+    "sbytes UBIGINT,dbytes UBIGINT,"                                                       \
+    "sentropy UTINYINT,dentropy UTINYINT,"                                                 \
+    "siat UBIGINT,diat UBIGINT,"                                                           \
+    "sstdev UBIGINT,dstdev UBIGINT,"                                                       \
+    "stcpurg UINTEGER,dtcpurg UINTEGER,"                                                   \
+    "ssmallpktcnt UINTEGER,dsmallpktcnt UINTEGER,"                                         \
+    "slargpktcnt UINTEGER,dlargpktcnt UINTEGER,"                                           \
+    "snonemptypktcnt UINTEGER,dnonemptypktcnt UINTEGER,"                                   \
+    "sfirstnonemptycnt USMALLINT,dfirstnonemptycnt USMALLINT,"                             \
+    "sstdevpayload USMALLINT,dstdevpayload USMALLINT,"                                     \
+    "smaxpktsize USMALLINT,dmaxpktsize USMALLINT,"                                         \
     "spd VARCHAR,appid VARCHAR,reason VARCHAR,"                                            \
-    "mac VARCHAR,rmac VARCHAR,"                                                            \
-    "country VARCHAR,rcountry VARCHAR,"                                                    \
-    "asn UINTEGER,rasn UINTEGER,"                                                          \
-    "asnorg VARCHAR,rasnorg VARCHAR,"                                                      \
+    "smac VARCHAR,dmac VARCHAR,"                                                           \
+    "scountry VARCHAR,dcountry VARCHAR,"                                                   \
+    "sasn UINTEGER,dasn UINTEGER,"                                                         \
+    "sasnorg VARCHAR,dasnorg VARCHAR,"                                                     \
     "model VARCHAR,score FLOAT"                                                            \
     ")"
 

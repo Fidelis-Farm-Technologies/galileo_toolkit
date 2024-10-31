@@ -6,7 +6,8 @@ use questdb::ingress::{Buffer, TimestampMicros, TimestampNanos};
 struct PacketsRecord {
     bucket: i64,
     observ: String,
-    count: i64,
+    spkts: i64,
+    dpkts: i64
 }
 
 pub struct PacketsTable {
@@ -18,13 +19,12 @@ impl TableTrait for PacketsTable {
         self.table_name
     }
     fn create(&self, api_url: &String) {
-        //println!("creating table: {} {}", api_url, self.table_name);
-
         let sql_create_table = format!(
             "CREATE TABLE IF NOT EXISTS {}(
                 bucket TIMESTAMP,
                 observ SYMBOL CAPACITY 64 INDEX,
-                count LONG,
+                spkts LONG,
+                dpkts LONG,
                 timestamp TIMESTAMP) 
                 TIMESTAMP(timestamp) PARTITION BY HOUR;",
                 self.table_name
@@ -37,7 +37,7 @@ impl TableTrait for PacketsTable {
             .expect("invalid url params");
 
         match reqwest::blocking::get(url) {
-            Ok(r) => println!("Database importer: verified {} table: {:?}", self.table_name, r.status()),
+            Ok(r) => println!("Database importer: verified [{}] table: {:?}", self.table_name, r.status()),
             Err(e) => panic!("Error: creating {} table - {:?}", self.table_name, e),
         };
     }
@@ -45,9 +45,8 @@ impl TableTrait for PacketsTable {
         //
         // query DuckDB memtable
         //
-        let mut stmt = source.prepare("SELECT time_bucket (INTERVAL '1' minute, stime) as bucket,
-                                            observ,
-                                            sum(pkts+rpkts),
+        // select bucket, sum(count) from bytes GROUP by bucket order by bucket
+        let mut stmt = source.prepare("SELECT time_bucket (INTERVAL '1' minute, stime) as bucket,observ,sum(spkts),sum(dpkts)
                                         FROM memtable 
                                         GROUP BY all 
                                         ORDER BY all;").unwrap();
@@ -57,7 +56,8 @@ impl TableTrait for PacketsTable {
                 Ok(PacketsRecord {
                     bucket: row.get(0).expect("missing bucket"),
                     observ: row.get(1).expect("missing observ"),
-                    count: row.get(2).expect("missing count"),
+                    spkts: row.get(2).expect("missing spkts"),
+                    dpkts: row.get(3).expect("missing dpkts"),                    
                 })
             })
             .unwrap();
@@ -72,8 +72,10 @@ impl TableTrait for PacketsTable {
                 .unwrap()
                 .column_ts("bucket", TimestampMicros::new(record.bucket))
                 .unwrap()                     
-                .column_i64("count", record.count)
+                .column_i64("pkts", record.spkts)
                 .unwrap()
+                .column_i64("dpkts", record.dpkts)
+                .unwrap()                
                 .at(TimestampNanos::now())
                 .unwrap();
             if buffer.len() >= (104857600 - 1048576) {

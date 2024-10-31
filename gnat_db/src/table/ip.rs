@@ -3,17 +3,18 @@ use crate::TableTrait;
 use questdb::ingress::{Buffer, TimestampMicros, TimestampNanos};
 
 #[derive(Debug)]
-struct FlowRecord {
+struct IpRecord {
     bucket: i64,
     observ: String,
-    count: i64,
+    daddr: String,
+    count: i64,    
 }
 
-pub struct FlowTable {
+pub struct IpTable {
     pub table_name: &'static str,
 }
 
-impl TableTrait for FlowTable {
+impl TableTrait for IpTable {
     fn table_name(&self) -> &'static str {
         self.table_name
     }
@@ -22,6 +23,7 @@ impl TableTrait for FlowTable {
             "CREATE TABLE IF NOT EXISTS {}(
                 bucket TIMESTAMP,
                 observ SYMBOL CAPACITY 64 INDEX,
+                daddr VARCHAR,
                 count LONG,
                 timestamp TIMESTAMP) 
                 TIMESTAMP(timestamp) PARTITION BY HOUR;",
@@ -43,19 +45,19 @@ impl TableTrait for FlowTable {
         //
         // query DuckDB memtable
         //
-        let mut stmt = source.prepare("SELECT time_bucket (INTERVAL '1' minute, stime) as bucket,
-                                            observ,
-                                            count() 
-                                        FROM memtable 
-                                        GROUP BY all 
-                                        ORDER BY all;").unwrap();
+
+        let mut stmt = source.prepare("SELECT time_bucket (INTERVAL '1' minute, stime) as bucket,observ,daddr,count()
+                                                            FROM memtable 
+                                                            GROUP BY all 
+                                                            ORDER BY all;").unwrap();
 
         let record_iter = stmt
             .query_map([], |row| {
-                Ok(FlowRecord {
+                Ok(IpRecord {
                     bucket: row.get(0).expect("missing bucket"),
                     observ: row.get(1).expect("missing observ"),
-                    count: row.get(2).expect("missing count"),
+                    daddr: row.get(2).expect("missing daddr"),
+                    count: row.get(3).expect("missing count"),                    
                 })
             })
             .unwrap();
@@ -70,8 +72,10 @@ impl TableTrait for FlowTable {
                 .unwrap()
                 .column_ts("bucket", TimestampMicros::new(record.bucket))
                 .unwrap()                
-                .column_i64("count", record.count)
+                .column_str("daddr", record.daddr)
                 .unwrap()
+                .column_i64("count", record.count)
+                .unwrap()                
                 .at(TimestampNanos::now())
                 .unwrap();
             if buffer.len() >= (104857600 - 1048576) {

@@ -6,8 +6,8 @@ use questdb::ingress::{Buffer, TimestampMicros, TimestampNanos};
 struct AsnRecord {
     bucket: i64,
     observ: String,
-    asn: i64,
-    asnorg: String,
+    dasn: i64,
+    dasnorg: String,
     count: i64,
 }
 
@@ -20,14 +20,12 @@ impl TableTrait for AsnTable {
         self.table_name
     }
     fn create(&self, api_url: &String) {
-        //println!("creating table: {} {}", api_url, self.table_name);
-
         let sql_create_table = format!(
             "CREATE TABLE IF NOT EXISTS {}(
                 bucket TIMESTAMP,
                 observ SYMBOL CAPACITY 64 INDEX,
-                asnorg SYMBOL CAPACITY 8192 INDEX,                
-                asn long,
+                dasnorg SYMBOL CAPACITY 8192 INDEX,                
+                dasn long,
                 count LONG,
                 timestamp TIMESTAMP) 
                 TIMESTAMP(timestamp) PARTITION BY HOUR;",
@@ -41,11 +39,7 @@ impl TableTrait for AsnTable {
             .expect("invalid url params");
 
         match reqwest::blocking::get(url) {
-            Ok(r) => println!(
-                "Database importer: verified {} table: {:?}",
-                self.table_name,
-                r.status()
-            ),
+            Ok(r) => println!("Database importer: verified [{}] table: {:?}", self.table_name, r.status()),
             Err(e) => panic!("Error: creating {} table - {:?}", self.table_name, e),
         };
     }
@@ -57,8 +51,8 @@ impl TableTrait for AsnTable {
             .prepare(
                 "SELECT time_bucket (INTERVAL '1' minute, stime) as bucket,
                                             observ,
-                                            asn,                                            
-                                            asnorg,                                            
+                                            dasn,                                            
+                                            dasnorg,                                            
                                             count() 
                                         FROM memtable 
                                         GROUP BY all 
@@ -71,8 +65,8 @@ impl TableTrait for AsnTable {
                 Ok(AsnRecord {
                     bucket: row.get(0).expect("missing bucket"),
                     observ: row.get(1).expect("missing observ"),
-                    asn: row.get(2).expect("missing asn"),
-                    asnorg: row.get(3).expect("missing asnorg"),
+                    dasn: row.get(2).expect("missing dasn"),
+                    dasnorg: row.get(3).expect("missing dasnorg"),
                     count: row.get(4).expect("missing count"),
                 })
             })
@@ -86,9 +80,9 @@ impl TableTrait for AsnTable {
                 .unwrap()
                 .symbol("observ", record.observ)
                 .unwrap()
-                .symbol("asnorg", record.asnorg)
+                .symbol("dasnorg", record.dasnorg)
                 .unwrap()
-                .column_i64("arg", record.asn)
+                .column_i64("dasn", record.dasn)
                 .unwrap()
                 .column_ts("bucket", TimestampMicros::new(record.bucket))
                 .unwrap()

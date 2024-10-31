@@ -6,7 +6,7 @@ use questdb::ingress::{Buffer, TimestampMicros, TimestampNanos};
 struct CountryRecord {
     bucket: i64,
     observ: String,
-    country: String,
+    dcountry: String,
     count: i64,
 }
 
@@ -19,13 +19,11 @@ impl TableTrait for CountryTable {
         self.table_name
     }
     fn create(&self, api_url: &String) {
-        //println!("creating table: {} {}", api_url, self.table_name);
-
         let sql_create_table = format!(
             "CREATE TABLE IF NOT EXISTS {}(
                 bucket TIMESTAMP,
                 observ SYMBOL CAPACITY 64 INDEX,
-                country SYMBOL CAPACITY 8192 INDEX,
+                dcountry SYMBOL CAPACITY 8192 INDEX,
                 count LONG,
                 timestamp TIMESTAMP) 
                 TIMESTAMP(timestamp) PARTITION BY HOUR;",
@@ -39,7 +37,7 @@ impl TableTrait for CountryTable {
             .expect("invalid url params");
 
         match reqwest::blocking::get(url) {
-            Ok(r) => println!("Database importer: verified {} table: {:?}", self.table_name, r.status()),
+            Ok(r) => println!("Database importer: verified [{}] table: {:?}", self.table_name, r.status()),
             Err(e) => panic!("Error: creating {} table - {:?}", self.table_name, e),
         };
     }
@@ -49,7 +47,7 @@ impl TableTrait for CountryTable {
         //
         let mut stmt = source.prepare("SELECT time_bucket (INTERVAL '1' minute, stime) as bucket,
                                             observ,
-                                            country,
+                                            dcountry,
                                             count() 
                                         FROM memtable 
                                         GROUP BY all 
@@ -60,7 +58,7 @@ impl TableTrait for CountryTable {
                 Ok(CountryRecord {
                     bucket: row.get(0).expect("missing bucket"),
                     observ: row.get(1).expect("missing observ"),
-                    country: row.get(2).expect("missing country"),
+                    dcountry: row.get(2).expect("missing dcountry"),
                     count: row.get(3).expect("missing count"),
                 })
             })
@@ -74,7 +72,7 @@ impl TableTrait for CountryTable {
                 .unwrap()
                 .symbol("observ", record.observ)
                 .unwrap()
-                .symbol("country", record.country)
+                .symbol("dcountry", record.dcountry)
                 .unwrap()
                 .column_ts("bucket", TimestampMicros::new(record.bucket))
                 .unwrap()                

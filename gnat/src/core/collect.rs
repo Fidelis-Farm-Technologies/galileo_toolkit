@@ -61,7 +61,7 @@ pub fn collect(
         &country_spec,
     );
     if status < 0 {
-        eprintln!("error: collector failure");
+        eprintln!("Error: collector failure");
       
     } 
     Ok(())

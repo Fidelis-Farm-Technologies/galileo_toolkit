@@ -13,7 +13,7 @@ use std::path::Path;
 #[command(version, about, long_about = None)]
 struct Args {
     #[arg(long)]
-    interval: u64,
+    minutes: Option<u32>,
 
     #[arg(long)]
     input: String,
@@ -29,25 +29,25 @@ fn main() {
     let args = Args::parse();
     let input_spec = args.input.clone();
     let output_spec = args.output.clone();
-    let interval_spec = args.interval.clone();
+    let minutes_spec = args.minutes.unwrap_or(1).clone();
     let tag_spec = args.tag.unwrap_or("gnat".to_string()).clone();
     //
     // verify the combination of arguments are valid
     //
     if !Path::new(&input_spec).is_dir() {
-        eprintln!("error: invalid --input directory {}", input_spec);
+        eprintln!("Error: invalid --input directory {}", input_spec);
         std::process::exit(exitcode::CONFIG)
     }
 
     if !Path::new(&output_spec).is_dir() {
-        eprintln!("error: invalid --output directory {}", output_spec);
+        eprintln!("Error: invalid --output directory {}", output_spec);
         std::process::exit(exitcode::CONFIG)
     }
 
-    if interval_spec <= 0 {
-        eprintln!("error: invalid --interval value {}", interval_spec);
+    if minutes_spec <= 0 {
+        eprintln!("Error: invalid --interval value {}", minutes_spec);
         std::process::exit(exitcode::CONFIG)
     }
 
-    let _ = batch(tag_spec, interval_spec, input_spec, output_spec);
+    let _ = batch(tag_spec, minutes_spec, input_spec, output_spec);
 }

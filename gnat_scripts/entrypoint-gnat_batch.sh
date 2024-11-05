@@ -21,6 +21,6 @@ fi
 /opt/gnat/bin/gnat_batch \
     --input ${GNAT_INPUT_DIR} \
     --output ${GNAT_OUTPUT_DIR} \
-    --interval ${GNAT_BATCH_INTERVAL} 
+    --minutes ${GNAT_BATCH_INTERVAL} 
     
 

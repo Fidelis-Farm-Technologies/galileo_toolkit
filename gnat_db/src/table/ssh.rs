@@ -57,9 +57,9 @@ impl TableTrait for SshTable {
                                         FROM memtable 
                                         WHERE starts_with(appid,'ssh')
                                         GROUP BY all 
-                                        ORDER BY all;",
-            )
-            .unwrap();
+                                        ORDER BY all
+                                        LIMIT 100;").unwrap();         
+
 
         let record_iter = stmt
             .query_map([], |row| {

@@ -24,6 +24,7 @@ use gnat_db::table::country::CountryTable;
 use gnat_db::table::dns::DnsTable;
 use gnat_db::table::doh::DohTable;
 use gnat_db::table::flow::FlowTable;
+use gnat_db::table::ip::IpTable;
 use gnat_db::table::packets::PacketsTable;
 use gnat_db::table::proto::ProtoTable;
 use gnat_db::table::ssh::SshTable;
@@ -102,6 +103,9 @@ fn questdb_insert(
     let dns: DnsTable = DnsTable { table_name: "dns" };
     let doh: DohTable = DohTable { table_name: "doh" };    
     let flow: FlowTable = FlowTable { table_name: "flow" };
+    let ip: IpTable = IpTable {
+        table_name: "ip",
+    };        
     let packets: PacketsTable = PacketsTable {
         table_name: "packets",
     };
@@ -122,6 +126,7 @@ fn questdb_insert(
     table_list.push(&dns);
     table_list.push(&doh);    
     table_list.push(&flow);
+    table_list.push(&ip);    
     table_list.push(&packets);
     table_list.push(&proto);
     table_list.push(&ssh);

@@ -53,9 +53,8 @@ impl TableTrait for ProtoTable {
                                             count() 
                                         FROM memtable 
                                         GROUP BY all 
-                                        ORDER BY all;",
-            )
-            .unwrap();
+                                        ORDER BY all
+                                        LIMIT 100;").unwrap();         
 
         let record_iter = stmt
             .query_map([], |row| {

@@ -61,9 +61,8 @@ impl TableTrait for DohTable {
                                         FROM memtable 
                                         WHERE starts_with(appid,'doh')
                                         GROUP BY all 
-                                        ORDER BY all;",
-            )
-            .unwrap();
+                                        ORDER BY all
+                                        LIMIT 100;").unwrap();         
 
         let record_iter = stmt
             .query_map([], |row| {

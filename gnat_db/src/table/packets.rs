@@ -72,7 +72,7 @@ impl TableTrait for PacketsTable {
                 .unwrap()
                 .column_ts("bucket", TimestampMicros::new(record.bucket))
                 .unwrap()                     
-                .column_i64("pkts", record.spkts)
+                .column_i64("spkts", record.spkts)
                 .unwrap()
                 .column_i64("dpkts", record.dpkts)
                 .unwrap()                

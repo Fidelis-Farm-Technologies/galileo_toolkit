@@ -55,7 +55,8 @@ impl TableTrait for DnsTable {
                                         FROM memtable 
                                         WHERE starts_with(appid,'dns')
                                         GROUP BY all 
-                                        ORDER BY all;").unwrap();
+                                        ORDER BY all
+                                        LIMIT 100;").unwrap();         
 
         let record_iter = stmt
             .query_map([], |row| {

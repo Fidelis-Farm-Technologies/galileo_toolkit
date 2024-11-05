@@ -49,7 +49,8 @@ impl TableTrait for IpTable {
         let mut stmt = source.prepare("SELECT time_bucket (INTERVAL '1' minute, stime) as bucket,observ,daddr,count()
                                                             FROM memtable 
                                                             GROUP BY all 
-                                                            ORDER BY all;").unwrap();
+                                                            ORDER BY all
+                                                            LIMIT 100;").unwrap();
 
         let record_iter = stmt
             .query_map([], |row| {

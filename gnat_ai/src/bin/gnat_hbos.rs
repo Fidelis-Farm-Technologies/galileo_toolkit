@@ -15,9 +15,6 @@ use std::path::Path;
 #[command(version, about, long_about = None)]
 struct Args {
     #[arg(long)]
-    model: String,
-
-    #[arg(long)]
     input: String,
 
     #[arg(long)]
@@ -32,7 +29,6 @@ struct Args {
 
 fn main() {
     let args = Args::parse();
-    let model_spec = args.model.clone();
     let input_spec = args.input.clone();
     let output_spec = args.output.clone();
     let processed_spec = args.processed_dir.clone().unwrap_or("".to_string());
@@ -80,16 +76,5 @@ fn main() {
         std::process::exit(exitcode::CONFIG)
     }
 
-    match model_spec.as_str() {
-        "hbos" => {
-            let _ = hbos(&input_spec, &output_spec, &processed_spec, polling);
-        }
-        "memstream" => {
-            let _ = memstream(&input_spec, &output_spec, &processed_spec, polling);
-        }
-        _ => {
-            eprintln!("error: invalid --model <option>");
-            std::process::exit(exitcode::CONFIG)
-        }
-    }
+    let _ = hbos(&input_spec, &output_spec, &processed_spec, polling);
 }

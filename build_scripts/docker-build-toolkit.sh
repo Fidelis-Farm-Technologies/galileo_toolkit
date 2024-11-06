@@ -1,5 +1,6 @@
 #!/bin/bash
+VERSION=`git branch --show-current`
 
-docker image prune -f
-# docker build --no-cache -t gnat_toolkit -f Dockerfile.toolkit .
-docker build -t gnat_toolkit -f Dockerfile.toolkit .
+docker build --no-cache -t fidelismachine/galileo_toolkit:${VERSION} -t fidelismachine/galileo_toolkit:latest -f Dockerfile .
+# docker build -t fidelismachine/galileotoolkit:${VERSION} -t fidelismachine/galileotoolkit:latest -f Dockerfile.toolkit .
+

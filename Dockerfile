@@ -2,24 +2,57 @@
 # ---------------------------------------------------------------
 #
 # ---------------------------------------------------------------
-FROM gnat_toolkit AS builder
-FROM bitnami/minideb:bookworm AS runner
+FROM fidelismachine/gnat_base AS builder
 
 # ---------------------------------------------------------------
+# Stage 1
+# ---------------------------------------------------------------
+WORKDIR /builder
+COPY . .
+
 #
-# ---------------------------------------------------------------
+# build gnat_flow
+#
+WORKDIR /builder/gnat
+RUN cargo build --release
 
-WORKDIR /gnat_scripts
-COPY gnat_scripts .
+#
+# build gnat_db
+#
+WORKDIR /builder/gnat_db
+RUN cargo build --release
+
+#
+# build gnat_detect
+#
+ENV LIBTORCH=/base/libtorch
+ENV LIBTORCH_INCLUDE=/base/libtorch
+ENV LIBTORCH_LIB=/base/libtorch
+ENV LD_LIBRARY_PATH=/base/libtorch
+
+#WORKDIR /builder/gnat_ai
+#RUN cargo build --release
+
+#
+# Update the LD_LIBRARY_PATH
+#
+RUN echo "/opt/gnat/lib" > /etc/ld.so.conf.d/gnat.conf
+RUN echo "/opt/gnat/lib/pytorch" > /etc/ld.so.conf.d/pytorch.conf
+RUN ldconfig
+    
+# ---------------------------------------------------------------
+# Stage 2
+# ---------------------------------------------------------------
+FROM bitnami/minideb:bookworm AS runner
 
 WORKDIR /opt/gnat
 RUN mkdir -p /opt/gnat/bin /opt/gnat/scripts /opt/gnat/etc /opt/gnat/lib/pytorch
 
-COPY /gnat_scripts/entrypoint-gnat_yaf.sh /opt/gnat/scripts/
-COPY /gnat_scripts/entrypoint-gnat_import.sh /opt/gnat/scripts/
-COPY /gnat_scripts/entrypoint-gnat_collect.sh /opt/gnat/scripts/
-COPY /gnat_scripts/entrypoint-gnat_db.sh /opt/gnat/scripts/
-COPY /gnat_scripts/entrypoint-gnat_batch.sh /opt/gnat/scripts/
+COPY --from=builder /builder/gnat_scripts/entrypoint-gnat_yaf.sh /opt/gnat/scripts/
+COPY --from=builder /builder/gnat_scripts/entrypoint-gnat_import.sh /opt/gnat/scripts/
+COPY --from=builder /builder/gnat_scripts/entrypoint-gnat_collect.sh /opt/gnat/scripts/
+COPY --from=builder /builder/gnat_scripts/entrypoint-gnat_db.sh /opt/gnat/scripts/
+COPY --from=builder /builder/gnat_scripts/entrypoint-gnat_batch.sh /opt/gnat/scripts/
 
 COPY --from=builder /builder/gnat_etc/protocols /etc
 COPY --from=builder /usr/local/lib /opt/gnat/lib              

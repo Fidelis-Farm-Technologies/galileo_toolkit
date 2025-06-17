@@ -1,0 +1,12 @@
+.vscode
+.evidence
+.git
+.cargo
+.env
+target/*
+var/*
+*.parquet
+gnat_proxy
+docker-compose.yml
+**/*.tar.gz
+node_modules/

@@ -1,0 +1,64 @@
+use crate::model::table::TableTrait;
+use crate::model::table::MetricRecord;
+use chrono::{TimeZone, Utc};
+use duckdb::{params, Appender};
+
+pub struct AsnTable {
+    pub table_name: &'static str,
+}
+
+impl TableTrait for AsnTable {
+    fn table_name(&self) -> &'static str {
+        self.table_name
+    }
+
+    fn insert(&self, source: &duckdb::Connection, sink: &mut Appender) {
+        let mut stmt = source
+            .prepare(
+                "SELECT time_bucket (INTERVAL '1' minute, stime) as bucket,
+                                            observe,
+                                            dasn,                                            
+                                            dasnorg,                                            
+                                            count() 
+                                        FROM memtable 
+                                        GROUP BY all 
+                                        ORDER BY all;",
+            )
+            .unwrap();
+
+        let record_iter = stmt
+            .query_map([], |row| {
+                let dasn: u64 = row.get(2).expect("missing dasn");
+                let dasnorg: String = row.get(3).expect("missing dasnorg");
+                let key = format!("{}({})", dasn, dasnorg);
+                Ok(MetricRecord {
+                    bucket: row.get(0).expect("missing bucket"),
+                    observe: row.get(1).expect("missing observ"),
+                    name: "asn".to_string(),
+                    key,
+                    value: row.get(4).expect("missing count"),
+                })
+            })
+            .unwrap();
+        let mut count = 0;
+        for r in record_iter {
+            let record = r.unwrap();
+
+            let ts = Utc
+                .timestamp_opt((record.bucket / 1_000_000) as i64, 0)
+                .unwrap();
+            sink.append_row(params![
+                ts.to_rfc3339(),
+                record.observe,
+                record.name,
+                record.key,
+                record.value
+            ])
+            .unwrap();
+            count += 1;
+        }
+        if count > 0 {
+            println!("\t[{}:{}]", self.table_name, count);
+        }
+    }
+}

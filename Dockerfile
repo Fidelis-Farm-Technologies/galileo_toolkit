@@ -46,7 +46,7 @@ RUN --mount=type=cache,target=/var/cache/apt \
 WORKDIR /opt/gnat
 RUN mkdir -p /opt/gnat/bin /opt/gnat/scripts /opt/gnat/etc /opt/gnat/lib/pytorch
 
-COPY --from=builder /builder/gnat_scripts/entrypoint-gnat_yaf.sh /opt/gnat/scripts/
+COPY --from=builder /builder/gnat_scripts/entrypoint-gnat_sensor.sh /opt/gnat/scripts/
 COPY --from=builder /builder/gnat_scripts/entrypoint-gnat_import.sh /opt/gnat/scripts/
 COPY --from=builder /builder/gnat_scripts/entrypoint-gnat_collect.sh /opt/gnat/scripts/
 COPY --from=builder /builder/gnat_scripts/entrypoint-gnat_batch.sh /opt/gnat/scripts/
@@ -74,7 +74,7 @@ COPY --from=builder /builder/gnat/target/release/gnat_model /opt/gnat/bin/gnat_m
 COPY --from=builder /builder/gnat/target/release/gnat_tag /opt/gnat/bin/gnat_tag
 COPY --from=builder /builder/gnat/target/release/gnat_rule /opt/gnat/bin/gnat_rule
 
-COPY --from=builder /opt/gnat/bin/yaf /opt/gnat/bin/gnat_yaf
+COPY --from=builder /opt/gnat/bin/yaf /opt/gnat/bin/gnat_sensor
 COPY --from=builder /usr/local/bin/duckdb /opt/gnat/bin/duckdb
 
 COPY --from=builder \

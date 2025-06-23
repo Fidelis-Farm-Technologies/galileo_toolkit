@@ -19,6 +19,7 @@ use crate::utils::duckdb::{duckdb_open, duckdb_open_memory, duckdb_open_readonly
 use chrono::{DateTime, TimeZone, Utc};
 use duckdb::params;
 use duckdb::Appender;
+use duckdb::Connection;
 use duckdb::DropBehavior;
 use std::collections::HashMap;
 use std::fs;
@@ -295,8 +296,9 @@ impl FileProcessor for HbosProcessor {
                     "COPY (SELECT * FROM read_parquet({})) TO '{}' (FORMAT 'parquet', CODEC 'snappy', ROW_GROUP_SIZE 100_000);",
                     parquet_list, tmp_filename
                 );
-                db_out.execute_batch(&sql_command)
-                    .map_err(|e| Error::new(std::io::ErrorKind::Other, format!("DuckDB error: {}", e)))?;
+                db_out.execute_batch(&sql_command).map_err(|e| {
+                    Error::new(std::io::ErrorKind::Other, format!("DuckDB error: {}", e))
+                })?;
                 fs::rename(&tmp_filename, &final_filename)?;
                 return Ok(());
             }
@@ -309,13 +311,14 @@ impl FileProcessor for HbosProcessor {
                 "CREATE TABLE flow AS SELECT * FROM read_parquet({});",
                 parquet_list
             );
-            db_in.execute_batch(&sql_command)
-                .map_err(|e| Error::new(std::io::ErrorKind::Other, format!("DuckDB error: {}", e)))?;
+            db_in.execute_batch(&sql_command).map_err(|e| {
+                Error::new(std::io::ErrorKind::Other, format!("DuckDB error: {}", e))
+            })?;
 
             println!("{}: determining observation points...", self.command);
-            let mut stmt = db_in
-                .prepare(PARQUET_DISTINCT_OBSERVATIONS)
-                .map_err(|e| Error::new(std::io::ErrorKind::Other, format!("DuckDB error: {}", e)))?;
+            let mut stmt = db_in.prepare(PARQUET_DISTINCT_OBSERVATIONS).map_err(|e| {
+                Error::new(std::io::ErrorKind::Other, format!("DuckDB error: {}", e))
+            })?;
 
             let record_iter = stmt
                 .query_map([], |row| {
@@ -325,11 +328,15 @@ impl FileProcessor for HbosProcessor {
                         proto: row.get(2).expect("missing proto"),
                     })
                 })
-                .map_err(|e| Error::new(std::io::ErrorKind::Other, format!("DuckDB error: {}", e)))?;
+                .map_err(|e| {
+                    Error::new(std::io::ErrorKind::Other, format!("DuckDB error: {}", e))
+                })?;
 
             let mut distinct_observation_models: Vec<DistinctObservation> = Vec::new();
             for record in record_iter {
-                distinct_observation_models.push(record.map_err(|e| Error::new(std::io::ErrorKind::Other, format!("DuckDB error: {}", e)))?);
+                distinct_observation_models.push(record.map_err(|e| {
+                    Error::new(std::io::ErrorKind::Other, format!("DuckDB error: {}", e))
+                })?);
             }
 
             println!("{}: scoring...", self.command);
@@ -349,7 +356,9 @@ impl FileProcessor for HbosProcessor {
 
         println!("{}: transforming data...", self.command);
         let sql_transform_command = format!(
-            "CREATE OR REPLACE TABLE flow AS SELECT * FROM read_parquet({});\nUPDATE flow SET hbos_score = score_table.hbos_score FROM score_table WHERE flow.id = score_table.id;\nCOPY (SELECT * FROM flow) TO '{}' (FORMAT parquet, COMPRESSION zstd, ROW_GROUP_SIZE 100_000);",
+            "CREATE OR REPLACE TABLE flow AS SELECT * FROM read_parquet({});
+             UPDATE flow SET hbos_score = score_table.hbos_score FROM score_table WHERE flow.id = score_table.id;
+             COPY (SELECT * FROM flow) TO '{}' (FORMAT parquet, COMPRESSION zstd, ROW_GROUP_SIZE 100_000);",
             parquet_list, tmp_filename
         );
 

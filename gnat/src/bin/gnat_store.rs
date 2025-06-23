@@ -7,7 +7,7 @@
  */
 
 use clap::Parser;
-use gnat::pipeline::batch::BatchProcessor;
+use gnat::pipeline::store::StoreProcessor;
 use gnat::pipeline::FileProcessor;
 use std::error::Error;
 
@@ -34,8 +34,8 @@ struct Args {
 fn main() -> Result<(), Box<dyn Error>> {
     let args = Args::parse();
 
-    let mut batch_processor = BatchProcessor::new(
-        "batch",
+    let mut store_processor = StoreProcessor::new(
+        "store",
         &args.input,
         &args.output,
         &args.pass.clone().unwrap_or(String::new()),
@@ -44,7 +44,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         &args.options.clone().unwrap_or(String::new()),
     )?;
 
-    batch_processor.run()?;
+    store_processor.run()?;
 
     Ok(())
 }

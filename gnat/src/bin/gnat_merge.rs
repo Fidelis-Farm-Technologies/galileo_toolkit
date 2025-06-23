@@ -7,7 +7,7 @@
  */
 
 use clap::Parser;
-use gnat::pipeline::metrics::MetricsProcessor;
+use gnat::pipeline::merge::MergeProcessor;
 use gnat::pipeline::FileProcessor;
 use std::error::Error;
 
@@ -28,23 +28,23 @@ struct Args {
 
     #[arg(long)]
     interval: Option<String>,
-     
+   
 }
 
 fn main() -> Result<(), Box<dyn Error>> {
     let args = Args::parse();
 
-    let mut metrics_processor = MetricsProcessor::new(
-        "metrics",
+    let mut merge_processor = MergeProcessor::new(
+        "merge",
         &args.input,
         &args.output,
         &args.pass.clone().unwrap_or(String::new()),
-        &args.interval.clone().unwrap_or(String::from("minute")),
-        ".parquet", 
+        &args.interval.clone().unwrap_or(String::from("second")),
+        ".parquet",
         &args.options.clone().unwrap_or(String::new()),
     )?;
 
-    metrics_processor.run()?;
+    merge_processor.run()?;
 
     Ok(())
 }

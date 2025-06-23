@@ -46,7 +46,7 @@ pub struct BucketRecord {
     pub ts: i64,
 }
 
-pub struct MetricsProcessor {
+pub struct AggregationProcessor {
     pub command: String,
     pub input: String,
     pub output: String,
@@ -62,7 +62,7 @@ pub struct MetricsProcessor {
     pub use_motherduck: bool,
 }
 
-impl MetricsProcessor {
+impl AggregationProcessor {
     pub fn new(
         command: &str,
         input: &str,
@@ -172,11 +172,11 @@ impl MetricsProcessor {
             cache_directory,
             cache_file,
             dtg_format: dtg_format,
-            use_motherduck,
+            use_motherduck: use_motherduck,
         })
     }
 }
-impl FileProcessor for MetricsProcessor {
+impl FileProcessor for AggregationProcessor {
     fn get_command(&self) -> &String {
         &self.command
     }
@@ -222,9 +222,15 @@ impl FileProcessor for MetricsProcessor {
         if self.use_motherduck {
             mem_source
                 .execute_batch(CREATE_METRICS_TABLE)
-                .map_err(|e| Error::new(std::io::ErrorKind::Other, format!("DuckDB error: {}", e)))?;
-            let mut cache_appender = mem_source.appender("metrics")
-                .map_err(|e| Error::new(std::io::ErrorKind::Other, format!("DuckDB appender error: {}", e)))?;
+                .map_err(|e| {
+                    Error::new(std::io::ErrorKind::Other, format!("DuckDB error: {}", e))
+                })?;
+            let mut cache_appender = mem_source.appender("metrics").map_err(|e| {
+                Error::new(
+                    std::io::ErrorKind::Other,
+                    format!("DuckDB appender error: {}", e),
+                )
+            })?;
             for table in &self.table_list {
                 table.insert(&mem_source, &mut cache_appender);
             }
@@ -234,8 +240,9 @@ impl FileProcessor for MetricsProcessor {
                 "COPY metrics TO '{}' (FORMAT parquet, COMPRESSION zstd);",
                 tmp_parquet
             );
-            mem_source.execute_batch(&sql_copy)
-                .map_err(|e| Error::new(std::io::ErrorKind::Other, format!("DuckDB error: {}", e)))?;
+            mem_source.execute_batch(&sql_copy).map_err(|e| {
+                Error::new(std::io::ErrorKind::Other, format!("DuckDB error: {}", e))
+            })?;
 
             println!("{}: uploading to motherduck...", self.command);
             let sql_export = format!(
@@ -243,69 +250,115 @@ impl FileProcessor for MetricsProcessor {
                 tmp_parquet
             );
             let start = Instant::now();
-            self.db_conn
-                .execute_batch(&sql_export)
-                .map_err(|e| Error::new(std::io::ErrorKind::Other, format!("DuckDB error: {}", e)))?;
+            self.db_conn.execute_batch(&sql_export).map_err(|e| {
+                Error::new(std::io::ErrorKind::Other, format!("DuckDB error: {}", e))
+            })?;
             let duration = start.elapsed();
             println!("{}: elapsed time: {:?}", self.command, duration);
-            fs::remove_file(tmp_parquet)
-                .map_err(|e| Error::new(std::io::ErrorKind::Other, format!("remove_file error: {}", e)))?;
+            fs::remove_file(tmp_parquet).map_err(|e| {
+                Error::new(
+                    std::io::ErrorKind::Other,
+                    format!("remove_file error: {}", e),
+                )
+            })?;
         } else {
             {
-                let mut tx = self.db_conn.transaction()
-                    .map_err(|e| Error::new(std::io::ErrorKind::Other, format!("DuckDB transaction error: {}", e)))?;
+                let mut tx = self.db_conn.transaction().map_err(|e| {
+                    Error::new(
+                        std::io::ErrorKind::Other,
+                        format!("DuckDB transaction error: {}", e),
+                    )
+                })?;
                 tx.set_drop_behavior(DropBehavior::Commit);
-                let mut cache_appender = tx.appender("metrics")
-                    .map_err(|e| Error::new(std::io::ErrorKind::Other, format!("DuckDB appender error: {}", e)))?;
+                let mut cache_appender = tx.appender("metrics").map_err(|e| {
+                    Error::new(
+                        std::io::ErrorKind::Other,
+                        format!("DuckDB appender error: {}", e),
+                    )
+                })?;
                 for table in &self.table_list {
                     table.insert(&mem_source, &mut cache_appender);
                 }
                 let _ = cache_appender.flush();
                 drop(cache_appender);
-                   
-                tx.commit()
-                    .map_err(|e| Error::new(std::io::ErrorKind::Other, format!("DuckDB commit error: {}", e)))?;
+
+                tx.commit().map_err(|e| {
+                    Error::new(
+                        std::io::ErrorKind::Other,
+                        format!("DuckDB commit error: {}", e),
+                    )
+                })?;
             }
 
             println!("{}: exporting", self.command);
             let sql_command = format!("COPY (SELECT *, year(bucket) AS year, month(bucket) AS month, day(bucket) AS day FROM metrics)
                    TO '{}' 
                    (FORMAT parquet, COMPRESSION zstd, ROW_GROUP_SIZE 100_000, PARTITION_BY (year, month, day), 
-                   OVERWRITE_OR_IGNORE,  FILENAME_PATTERN 'gnat-{}-{}.{{i}}');", self.output, self.command, self.dtg_format);
+                   OVERWRITE_OR_IGNORE,FILENAME_PATTERN 'gnat-{}-{}.{{i}}');", self.output, self.command, self.dtg_format);
 
-            self.db_conn
-                .execute_batch(&sql_command)
-                .map_err(|e| Error::new(std::io::ErrorKind::Other, format!("DuckDB error: {}", e)))?;
+            self.db_conn.execute_batch(&sql_command).map_err(|e| {
+                Error::new(std::io::ErrorKind::Other, format!("DuckDB error: {}", e))
+            })?;
 
             // get timestamps of the first and last record
             let sql_command = "SELECT bucket FROM metrics ORDER BY bucket ASC LIMIT 1;".to_string();
-            let mut stmt = self.db_conn.prepare(&sql_command)
-                .map_err(|e| Error::new(std::io::ErrorKind::Other, format!("DuckDB prepare error: {}", e)))?;
+            let mut stmt = self.db_conn.prepare(&sql_command).map_err(|e| {
+                Error::new(
+                    std::io::ErrorKind::Other,
+                    format!("DuckDB prepare error: {}", e),
+                )
+            })?;
             let bucket_time = stmt
                 .query_row([], |row| {
                     Ok(BucketRecord {
                         ts: row.get(0).expect("missing bucket"),
                     })
                 })
-                .map_err(|e| Error::new(std::io::ErrorKind::Other, format!("DuckDB query_row error: {}", e)))?;
-            let first = Utc.timestamp_opt(bucket_time.ts / 1_000_000, 0)
+                .map_err(|e| {
+                    Error::new(
+                        std::io::ErrorKind::Other,
+                        format!("DuckDB query_row error: {}", e),
+                    )
+                })?;
+            let first = Utc
+                .timestamp_opt(bucket_time.ts / 1_000_000, 0)
                 .single()
-                .ok_or_else(|| Error::new(std::io::ErrorKind::Other, "invalid timestamp for first record"))?;
+                .ok_or_else(|| {
+                    Error::new(
+                        std::io::ErrorKind::Other,
+                        "invalid timestamp for first record",
+                    )
+                })?;
 
             let sql_command =
                 "SELECT bucket FROM metrics ORDER BY bucket DESC LIMIT 1;".to_string();
-            let mut stmt = self.db_conn.prepare(&sql_command)
-                .map_err(|e| Error::new(std::io::ErrorKind::Other, format!("DuckDB prepare error: {}", e)))?;
+            let mut stmt = self.db_conn.prepare(&sql_command).map_err(|e| {
+                Error::new(
+                    std::io::ErrorKind::Other,
+                    format!("DuckDB prepare error: {}", e),
+                )
+            })?;
             let bucket_time = stmt
                 .query_row([], |row| {
                     Ok(BucketRecord {
                         ts: row.get(0).expect("missing bucket"),
                     })
                 })
-                .map_err(|e| Error::new(std::io::ErrorKind::Other, format!("DuckDB query_row error: {}", e)))?;
-            let last = Utc.timestamp_opt(bucket_time.ts / 1_000_000, 0)
+                .map_err(|e| {
+                    Error::new(
+                        std::io::ErrorKind::Other,
+                        format!("DuckDB query_row error: {}", e),
+                    )
+                })?;
+            let last = Utc
+                .timestamp_opt(bucket_time.ts / 1_000_000, 0)
                 .single()
-                .ok_or_else(|| Error::new(std::io::ErrorKind::Other, "invalid timestamp for last record"))?;
+                .ok_or_else(|| {
+                    Error::new(
+                        std::io::ErrorKind::Other,
+                        "invalid timestamp for last record",
+                    )
+                })?;
 
             // determine if it's time to clear the db cache
             if first.day() != last.day() {
@@ -320,17 +373,28 @@ impl FileProcessor for MetricsProcessor {
                     self.db_conn = duckdb_open(&cache_file, 2);
                     self.db_conn
                         .execute_batch(CREATE_METRICS_TABLE)
-                        .map_err(|e| Error::new(std::io::ErrorKind::Other, format!("DuckDB error: {}", e)))?;
+                        .map_err(|e| {
+                            Error::new(std::io::ErrorKind::Other, format!("DuckDB error: {}", e))
+                        })?;
 
-                    fs::remove_file(self.cache_file.clone())
-                        .map_err(|e| Error::new(std::io::ErrorKind::Other, format!("remove_file error: {}", e)))?;
+                    fs::remove_file(self.cache_file.clone()).map_err(|e| {
+                        Error::new(
+                            std::io::ErrorKind::Other,
+                            format!("remove_file error: {}", e),
+                        )
+                    })?;
                     self.cache_file = cache_file;
 
                     println!("{}: reset cache [{}]", self.command, self.cache_file);
                 }
             }
         }
-        mem_source.close().map_err(|e| Error::new(std::io::ErrorKind::Other, format!("DuckDB close error: {:?}", e)))?;
+        mem_source.close().map_err(|e| {
+            Error::new(
+                std::io::ErrorKind::Other,
+                format!("DuckDB close error: {:?}", e),
+            )
+        })?;
         Ok(())
     }
 }

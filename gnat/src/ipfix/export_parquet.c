@@ -1096,8 +1096,6 @@ ReaderToFileSink(
     GError **err)
 {
     GNAT_CONTEXT *gnat = (GNAT_CONTEXT *)ctx;
-    // fprintf(stderr, "%s:\n", __FUNCTION__);
-    /* presume our buffer is ready and process a flow */
     YAF_FLOW_RECORD ipfix_record;
     size_t yaf_rec_len = sizeof(ipfix_record);
     while (fBufNext(gnat->input_buf, (uint8_t *)&ipfix_record, &yaf_rec_len, err))

@@ -232,94 +232,133 @@ impl RuleProcessor {
         let policies: Vec<RuleJsonStructure> =
             serde_json::from_str(&json_data).expect("failed to parse rule file");
 
-        println!("Loading policy file...");
+        println!("Loading rule file...");
         let mut rules: Vec<String> = Vec::new();
 
-        for policy in policies.clone().into_iter() {
-            let mut rule = String::from("SET trigger = -1 WHERE ");
-            if policy.action == "trigger" {
-                rule = String::from("SET trigger = 1 WHERE ");
-            } else if policy.action != "ignore" {
-                eprintln!("error: 'action' invalid value '{}'", policy.action);
+        if policies.is_empty() {
+            eprintln!("error: no policies found in rule file '{}'", rule_spec);
+            std::process::exit(exitcode::CONFIG);
+        }
+        if policies.len() > 1000 {
+            eprintln!(
+                "warning: more than 1000 policies found in rule file '{}'",
+                rule_spec
+            );
+        }
+        println!("{} policies found", policies.len());
+        let mut terms = 0;
+        for rule in policies.clone().into_iter() {
+            let mut rule_line = String::from("SET trigger = -1 WHERE ");
+            if rule.action == "trigger" {
+                rule_line = String::from("SET trigger = 1 WHERE ");
+            } else if rule.action != "ignore" {
+                eprintln!("error: 'action' invalid value '{}'", rule.action);
                 std::process::exit(exitcode::CONFIG)
             }
 
-            if !policy.observe.is_empty() {
-                rule.push_str("observe ^@ '");
-                rule.push_str(&policy.observe);
-                rule.push_str("'");
-            } else {
-                eprintln!("load_rule_file: 'observe' cannot be null");
-                std::process::exit(exitcode::CONFIG)
+            if !rule.observe.is_empty() {
+                rule_line.push_str("observe ^@ '");
+                rule_line.push_str(&rule.observe);
+                rule_line.push_str("'");
+                terms += 1;
             }
 
-            if !policy.proto.is_empty() {
-                rule.push_str(" AND ");
-                rule.push_str("proto = '");
-                rule.push_str(&policy.proto);
-                rule.push_str("'");
+            if !rule.proto.is_empty() {
+                if terms > 0 {
+                    rule_line.push_str(" AND ");
+                }
+                terms += 1;
+                rule_line.push_str("proto = '");
+                rule_line.push_str(&rule.proto);
+                rule_line.push_str("'");
             }
 
-            if !policy.saddr.is_empty() {
-                rule.push_str(" AND ");
-                rule.push_str("saddr ^@ '");
-                rule.push_str(&policy.saddr);
-                rule.push_str("'");
+            if !rule.saddr.is_empty() {
+                if terms > 0 {
+                    rule_line.push_str(" AND ");
+                }
+                terms += 1;
+                rule_line.push_str("saddr ^@ '");
+                rule_line.push_str(&rule.saddr);
+                rule_line.push_str("'");
             }
 
-            if policy.sport != 0 {
-                rule.push_str(" AND ");
-                rule.push_str("sport = ");
-                rule.push_str(&policy.sport.to_string());
+            if rule.sport != 0 {
+                if terms > 0 {
+                    rule_line.push_str(" AND ");
+                }
+                terms += 1;
+                rule_line.push_str("sport = ");
+                rule_line.push_str(&rule.sport.to_string());
             }
 
-            if !policy.daddr.is_empty() {
-                rule.push_str(" AND ");
-                rule.push_str("daddr ^@ '");
-                rule.push_str(&policy.daddr);
-                rule.push_str("'");
+            if !rule.daddr.is_empty() {
+                if terms > 0 {
+                    rule_line.push_str(" AND ");
+                }
+                terms += 1;
+                rule_line.push_str("daddr ^@ '");
+                rule_line.push_str(&rule.daddr);
+                rule_line.push_str("'");
             }
 
-            if policy.dport != 0 {
-                rule.push_str(" AND ");
-                rule.push_str("dport = ");
-                rule.push_str(&policy.dport.to_string());
+            if rule.dport != 0 {
+                if terms > 0 {
+                    rule_line.push_str(" AND ");
+                }
+                terms += 1;
+                rule_line.push_str("dport = ");
+                rule_line.push_str(&rule.dport.to_string());
             }
 
-            if !policy.appid.is_empty() {
-                rule.push_str(" AND ");
-                rule.push_str("ndpi_appid ^@ '");
-                rule.push_str(&policy.appid);
-                rule.push_str("'");
+            if !rule.appid.is_empty() {
+                if terms > 0 {
+                    rule_line.push_str(" AND ");
+                }
+                terms += 1;
+                rule_line.push_str("ndpi_appid ^@ '");
+                rule_line.push_str(&rule.appid);
+                rule_line.push_str("'");
             }
 
-            if !policy.orient.is_empty() {
-                rule.push_str(" AND ");
-                rule.push_str("orient ^@ '");
-                rule.push_str(&policy.orient);
-                rule.push_str("'");
+            if !rule.orient.is_empty() {
+                if terms > 0 {
+                    rule_line.push_str(" AND ");
+                }
+                terms += 1;
+                rule_line.push_str("orient ^@ '");
+                rule_line.push_str(&rule.orient);
+                rule_line.push_str("'");
             }
 
-            if !policy.tag.is_empty() {
-                rule.push_str(" AND ");
-                rule.push_str("list_has_any(tag,['");
-                rule.push_str(&policy.tag);
-                rule.push_str("'])");
+            if !rule.tag.is_empty() {
+                if terms > 0 {
+                    rule_line.push_str(" AND ");
+                }
+                terms += 1;
+                rule_line.push_str("list_has_any(tag,['");
+                rule_line.push_str(&rule.tag);
+                rule_line.push_str("'])");
             }
 
-            if policy.risk_severity != 0 {
-                rule.push_str(" AND ");
-                rule.push_str("ndpi_risk_severity >= ");
-                rule.push_str(&policy.risk_severity.to_string());
+            if rule.risk_severity != 0 {
+                if terms > 0 {
+                    rule_line.push_str(" AND ");
+                }
+                terms += 1;
+                rule_line.push_str("ndpi_risk_severity >= ");
+                rule_line.push_str(&rule.risk_severity.to_string());
             }
 
-            if policy.hbos_severity != 0 {
-                rule.push_str(" AND ");
-                rule.push_str("hbos_severity >= ");
-                rule.push_str(&policy.hbos_severity.to_string());
+            if rule.hbos_severity != 0 {
+                if terms > 0 {
+                    rule_line.push_str(" AND ");
+                }
+                terms += 1;
+                rule_line.push_str("hbos_severity >= ");
+                rule_line.push_str(&rule.hbos_severity.to_string());
             }
-
-            rules.push(rule);
+            rules.push(rule_line);
         }
 
         println!(".done.");
@@ -382,15 +421,21 @@ impl FileProcessor for RuleProcessor {
             "CREATE TABLE flow AS SELECT * FROM read_parquet({});",
             parquet_list
         );
-        db_in.execute_batch(&sql_command)
+        db_in
+            .execute_batch(&sql_command)
             .map_err(|e| Error::new(std::io::ErrorKind::Other, format!("DuckDB error: {}", e)))?;
 
         // apply rules to the flow table
+        println!("{}: applying {} rules...", self.command, self.rules.len());
+        let start = Instant::now();
         for rule in self.rules.iter() {
             let sql_command = format!("UPDATE flow {};", rule);
-            db_in.execute_batch(&sql_command)
-                .map_err(|e| Error::new(std::io::ErrorKind::Other, format!("DuckDB error: {}", e)))?;
+            db_in.execute_batch(&sql_command).map_err(|e| {
+                Error::new(std::io::ErrorKind::Other, format!("DuckDB error: {}", e))
+            })?;
         }
+        let duration = start.elapsed();
+        println!("{}: elapsed time: {:?}", self.command, duration);
 
         // load distinct observation models
         println!("{}: determining observation points...", self.command);
@@ -408,16 +453,28 @@ impl FileProcessor for RuleProcessor {
             .map_err(|e| Error::new(std::io::ErrorKind::Other, format!("DuckDB error: {}", e)))?;
         let mut distinct_observation_models: Vec<DistinctObservation> = Vec::new();
         for record in record_iter {
-            distinct_observation_models.push(record.map_err(|e| Error::new(std::io::ErrorKind::Other, format!("DuckDB error: {}", e)))?);
+            distinct_observation_models.push(record.map_err(|e| {
+                Error::new(std::io::ErrorKind::Other, format!("DuckDB error: {}", e))
+            })?);
         }
 
         let current_utc: DateTime<Utc> = Utc::now();
         let rfc3339_name: String = current_utc.to_rfc3339();
-        let tmp_json_filename = format!(".gnat-{}.{}.json", self.command, rfc3339_name.replace(":", "-"));
-        let tmp_parquet_filename = format!(".gnat-{}-{}.parquet", self.command, rfc3339_name.replace(":", "-"));
+        let tmp_json_filename = format!(
+            ".gnat-{}.{}.json",
+            self.command,
+            rfc3339_name.replace(":", "-")
+        );
+        let tmp_parquet_filename = format!(
+            ".gnat-{}-{}.parquet",
+            self.command,
+            rfc3339_name.replace(":", "-")
+        );
         let parquet_filename = format!(
             "{}/gnat-{}-{}.parquet",
-            self.output, self.command, rfc3339_name.replace(":", "-")
+            self.output,
+            self.command,
+            rfc3339_name.replace(":", "-")
         );
 
         println!("{}: processing...", self.command);
@@ -429,14 +486,24 @@ impl FileProcessor for RuleProcessor {
                 .map_err(|e| Error::new(std::io::ErrorKind::Other, format!("DuckDB error: {}", e)))?;
             for record in &distinct_observation_models {
                 let distinct_key = format!("{}/{}/{}", record.observe, record.vlan, record.proto);
-                let histogram_model = self
-                    .histogram_map
-                    .get_mut(&distinct_key)
-                    .ok_or_else(|| Error::new(std::io::ErrorKind::Other, format!("missing histogram model: {}", distinct_key)))?;
+                let histogram_model =
+                    self.histogram_map.get_mut(&distinct_key).ok_or_else(|| {
+                        Error::new(
+                            std::io::ErrorKind::Other,
+                            format!("missing histogram model: {}", distinct_key),
+                        )
+                    })?;
                 let triggers = histogram_model
                     .generate_trigger_data(&mut db_in, &mut db_out)
-                    .map_err(|e| Error::new(std::io::ErrorKind::Other, format!("generate_trigger_data error: {}", e)))?;
-                println!("{}: [{}] {} triggers", self.command, distinct_key, triggers);
+                    .map_err(|e| {
+                        Error::new(
+                            std::io::ErrorKind::Other,
+                            format!("generate_trigger_data error: {}", e),
+                        )
+                    })?;
+                if triggers > 0 {
+                    println!("{}: [{}] {} triggers", self.command, distinct_key, triggers);
+                }
                 trigger_count += triggers;
             }
         }
@@ -445,19 +512,25 @@ impl FileProcessor for RuleProcessor {
         if trigger_count > 0 {
             println!("{}: transforming data...", self.command);
             let sql_transform_command = format!(
-                "CREATE TABLE flow AS SELECT * FROM read_parquet({});\nUPDATE flow \n   SET trigger = flow_meta.trigger,ndpi_risk_list = flow_meta.risk_list,hbos_map = flow_meta.hbos_map \n   FROM flow_meta \n   WHERE flow.id = flow_meta.id;                 \nCOPY (SELECT * FROM flow) TO '{}' (FORMAT parquet, COMPRESSION zstd, ROW_GROUP_SIZE 100_000);",
+                "CREATE TABLE flow AS SELECT * FROM read_parquet({});
+                 UPDATE flow
+                   SET trigger = flow_meta.trigger,ndpi_risk_list = flow_meta.risk_list,hbos_map = flow_meta.hbos_map
+                   FROM flow_meta
+                   WHERE flow.id = flow_meta.id;
+                 COPY (SELECT * FROM flow) TO '{}' (FORMAT parquet, COMPRESSION zstd, ROW_GROUP_SIZE 100_000);",
                 parquet_list, tmp_parquet_filename
             );
-            db_out
-                .execute_batch(&sql_transform_command)
-                .map_err(|e| Error::new(std::io::ErrorKind::Other, format!("DuckDB error: {}", e)))?;
+            db_out.execute_batch(&sql_transform_command).map_err(|e| {
+                Error::new(std::io::ErrorKind::Other, format!("DuckDB error: {}", e))
+            })?;
         } else {
             let sql_command = format!(
                 "COPY (SELECT * FROM read_parquet({})) TO '{}' (FORMAT 'parquet', CODEC 'snappy', ROW_GROUP_SIZE 100_000);",
                 parquet_list, tmp_parquet_filename
             );
-            db_out.execute_batch(&sql_command)
-                .map_err(|e| Error::new(std::io::ErrorKind::Other, format!("DuckDB error: {}", e)))?;
+            db_out.execute_batch(&sql_command).map_err(|e| {
+                Error::new(std::io::ErrorKind::Other, format!("DuckDB error: {}", e))
+            })?;
         }
         let _ = db_out.close();
 
@@ -468,16 +541,24 @@ impl FileProcessor for RuleProcessor {
                 tmp_parquet_filename
             );
             let start = Instant::now();
-            self.md_conn
-                .execute_batch(&sql_export)
-                .map_err(|e| Error::new(std::io::ErrorKind::Other, format!("DuckDB error: {}", e)))?;
+            self.md_conn.execute_batch(&sql_export).map_err(|e| {
+                Error::new(std::io::ErrorKind::Other, format!("DuckDB error: {}", e))
+            })?;
             let duration = start.elapsed();
             println!("{}: elapsed time: {:?}", self.command, duration);
-            fs::remove_file(&tmp_parquet_filename)
-                .map_err(|e| Error::new(std::io::ErrorKind::Other, format!("remove_file error: {}", e)))?;
+            fs::remove_file(&tmp_parquet_filename).map_err(|e| {
+                Error::new(
+                    std::io::ErrorKind::Other,
+                    format!("remove_file error: {}", e),
+                )
+            })?;
         } else {
-            fs::rename(&tmp_parquet_filename, &parquet_filename)
-                .map_err(|e| Error::new(std::io::ErrorKind::Other, format!("renaming temporary file error: {}", e)))?;
+            fs::rename(&tmp_parquet_filename, &parquet_filename).map_err(|e| {
+                Error::new(
+                    std::io::ErrorKind::Other,
+                    format!("renaming temporary file error: {}", e),
+                )
+            })?;
         }
         Ok(())
     }

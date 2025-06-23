@@ -1,0 +1,9 @@
+{ "tag":"cloudflare","observe":"napa","proto":"tcp","saddr":"","sport":0,"daddr":"","dport":0,"ndpi_appid":"tls.cloudflare","orient":""}
+{ "tag":"dns","observe":"napa","proto":"","saddr":"","sport":0,"daddr":"","dport":0,"ndpi_appid":"dns","orient":""}
+{ "tag":"intrusion","observe":"napa","proto":"","saddr":"","sport":0,"daddr":"","dport":0,"ndpi_appid":"","orient":"oi"}
+{ "tag":"tls","observe":"napa","proto":"tcp","saddr":"","sport":0,"daddr":"","dport":0,"ndpi_appid":"tls","orient":""}
+{ "tag":"mt8181","observe":"napa","proto":"tcp","saddr":"10.0.4.240","sport":0,"daddr":"10.1.1.81","dport":8181,"ndpi_appid":"", "orient":""}
+{ "tag":"snmp","observe":"napa","proto":"udp","saddr":"","sport":0,"daddr":"216.197.73.13","dport":161,"ndpi_appid":"snmp", "orient":""}
+{ "tag":"mt9000","observe":"napa","proto":"tcp","saddr":"10.0.4.240","sport":0,"daddr":"10.1.1.61","dport":9000,"ndpi_appid":"http", "orient":"ii"}
+
+

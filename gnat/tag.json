@@ -1,0 +1,4 @@
+{ "tag":"cloudflare","observe":"napa","proto":"tcp","saddr":"","sport":0,"daddr":"","dport":0,"ndpi_appid":"tls.cloudflare","orient":""}
+{ "tag":"dns","observe":"napa","proto":"","saddr":"","sport":0,"daddr":"","dport":0,"ndpi_appid":"dns","orient":""}
+
+

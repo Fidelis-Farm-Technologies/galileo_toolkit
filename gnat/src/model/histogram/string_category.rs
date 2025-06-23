@@ -195,15 +195,13 @@ impl StringCategoryHistogram {
     pub fn get_probability(&mut self, record: &MemFlowRecord) -> f64 {
         match self.name.as_str() {
             "proto" => self.probability(&record.proto),
-            "saddr" => self.probability(&record.saddr),
-            "daddr" => self.probability(&record.daddr),
             "iflags" => self.probability(&record.iflags),
             "uflags" => self.probability(&record.uflags),
             "scountry" => self.probability(&record.scountry),
             "dcountry" => self.probability(&record.dcountry),
             "spd" => self.probability(&record.spd),
-            "appid" => self.probability(&record.appid),
-            "category" => self.probability(&record.category),
+            "ndpi_appid" => self.probability(&record.appid),
+            "ndpi_category" => self.probability(&record.category),
             "orient" => self.probability(&record.orient),
             _ => panic!("invalid feature"),
         }

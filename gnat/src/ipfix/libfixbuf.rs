@@ -21,7 +21,6 @@ extern "C" {
         output_file: *const c_char,
         asn_file: *const c_char,
         country_file: *const c_char,
-        risk_score: u16,
     ) -> i32;
 
     fn libfixbuf_socket_import(
@@ -47,7 +46,6 @@ pub fn unsafe_ipfix_file_import(
     observation: &str,
     asn: &str,
     country: &str,
-    risk_score: u16,
 ) -> i32 {
 
     let c_observation = CString::new(observation).expect("converting to c_string");
@@ -63,7 +61,6 @@ pub fn unsafe_ipfix_file_import(
             c_output_dir.as_c_str().as_ptr(),
             c_asn_file.as_c_str().as_ptr(),
             c_country_file.as_c_str().as_ptr(),
-            risk_score,
         )
     }
 }

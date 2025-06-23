@@ -10,8 +10,9 @@ use crate::ipfix::libfixbuf::unsafe_ipfix_file_import;
 use crate::pipeline::parse_interval;
 use crate::pipeline::parse_options;
 use crate::pipeline::FileProcessor;
-use crate::pipeline::Interval;
 use crate::pipeline::FileType;
+use crate::pipeline::Interval;
+use duckdb::Connection;
 use std::io::Error;
 use std::path::Path;
 
@@ -25,7 +26,6 @@ pub struct ImportProcessor {
     pub observation: String,
     pub asn: String,
     pub country: String,
-    pub risk_threshold: u16,
 }
 
 impl ImportProcessor {
@@ -43,17 +43,12 @@ impl ImportProcessor {
         options.entry("observation").or_insert("gnat");
         options.entry("asn").or_insert("");
         options.entry("country").or_insert("");
-        options.entry("risk_threshold").or_insert("251");
         for (key, value) in &options {
             if !value.is_empty() {
                 println!("{}: [{}={}]", command, key, value);
             }
         }
-        let risk_threshold = options
-            .get("risk_threshold")
-            .expect("expected risk_threshold")
-            .parse::<u16>()
-            .map_err(|e| Error::new(std::io::ErrorKind::InvalidInput, format!("invalid risk_threshold: {}", e)))?;
+
         let observation = options.get("observation").expect("expected observation");
         let asn = options.get("asn").expect("expected asn");
         if !asn.is_empty() {
@@ -79,7 +74,6 @@ impl ImportProcessor {
             observation: observation.to_string(),
             asn: asn.to_string(),
             country: country.to_string(),
-            risk_threshold: risk_threshold,
         })
     }
 }
@@ -126,7 +120,6 @@ impl FileProcessor for ImportProcessor {
                 &observation,
                 &self.asn,
                 &self.country,
-                self.risk_threshold,
             );
             if import_result != 0 {
                 return Err(Error::other(format!("import failed for file: {}", file)));

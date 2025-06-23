@@ -101,58 +101,47 @@ impl TagProcessor {
                 rule.tag,  rule.tag
             );
             if !rule.observe.is_empty() {
-                rule_command.push_str(" AND ");
-                rule_command.push_str("observe ^@ '");
+                rule_command.push_str("AND observe ^@ '");
                 rule_command.push_str(&rule.observe);
                 rule_command.push_str("'");
-            } else {
-                eprintln!("load_tag_file: 'observe' cannot be null");
-                std::process::exit(exitcode::CONFIG)
             }
 
             if !rule.proto.is_empty() {
-                rule_command.push_str(" AND ");
-                rule_command.push_str("proto = '");
+                rule_command.push_str("AND proto = '");
                 rule_command.push_str(&rule.proto);
                 rule_command.push_str("'");
             }
 
             if !rule.saddr.is_empty() {
-                rule_command.push_str(" AND ");
-                rule_command.push_str("saddr ^@ '");
+                rule_command.push_str("AND saddr ^@ '");
                 rule_command.push_str(&rule.saddr);
                 rule_command.push_str("'");
             }
 
             if rule.sport != 0 {
-                rule_command.push_str(" AND ");
-                rule_command.push_str("sport = ");
+                rule_command.push_str("AND sport = ");
                 rule_command.push_str(&rule.sport.to_string());
             }
 
             if !rule.daddr.is_empty() {
-                rule_command.push_str(" AND ");
-                rule_command.push_str("daddr ^@ '");
+                rule_command.push_str("AND daddr ^@ '");
                 rule_command.push_str(&rule.daddr);
                 rule_command.push_str("'");
             }
 
             if rule.dport != 0 {
-                rule_command.push_str(" AND ");
-                rule_command.push_str("dport = ");
+                rule_command.push_str("AND dport = ");
                 rule_command.push_str(&rule.dport.to_string());
             }
 
             if !rule.ndpi_appid.is_empty() {
-                rule_command.push_str(" AND ");
-                rule_command.push_str("ndpi_appid ^@ '");
+                rule_command.push_str("AND ndpi_appid ^@ '");
                 rule_command.push_str(&rule.ndpi_appid);
                 rule_command.push_str("'");
             }
 
             if !rule.orient.is_empty() {
-                rule_command.push_str(" AND ");
-                rule_command.push_str("orient ^@ '");
+                rule_command.push_str("AND orient ^@ '");
                 rule_command.push_str(&rule.orient);
                 rule_command.push_str("'");
             }
@@ -175,10 +164,8 @@ impl TagProcessor {
             "COPY (SELECT * FROM flow) TO '{}' (FORMAT 'parquet', CODEC 'snappy', ROW_GROUP_SIZE 100_000);",
             tmp_filename
         );
-        conn.execute_batch(&sql_command)
-            .expect("sql batch");
-        fs::rename(&tmp_filename, &final_filename)
-            .expect("renaming");
+        conn.execute_batch(&sql_command).expect("sql batch");
+        fs::rename(&tmp_filename, &final_filename).expect("renaming");
     }
 }
 
@@ -226,9 +213,9 @@ impl FileProcessor for TagProcessor {
 
         for rule in &self.tag_list {
             let sql_command = format!("UPDATE flow {};", rule);
-            mem_conn
-                .execute_batch(&sql_command)
-                .map_err(|e| Error::new(std::io::ErrorKind::Other, format!("DuckDB error: {}", e)))?;
+            mem_conn.execute_batch(&sql_command).map_err(|e| {
+                Error::new(std::io::ErrorKind::Other, format!("DuckDB error: {}", e))
+            })?;
         }
 
         self.export_parquet_file(&mem_conn);

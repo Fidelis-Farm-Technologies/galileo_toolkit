@@ -18,10 +18,11 @@ use crate::model::table::DistinctObservation;
 use crate::pipeline::parse_interval;
 use crate::pipeline::parse_options;
 use crate::pipeline::FileProcessor;
-use crate::pipeline::Interval;
 use crate::pipeline::FileType;
+use crate::pipeline::Interval;
 use chrono::Datelike;
 use chrono::{DateTime, TimeZone, Utc};
+use duckdb::Connection;
 use std::time::UNIX_EPOCH;
 
 use crate::utils::duckdb::{duckdb_open, duckdb_open_memory};
@@ -41,7 +42,6 @@ pub struct ModelProcessor {
     pub extension: String,
     pub feature_list: Vec<String>,
     pub quantile: f64,
-    pub name: String,
 }
 
 impl ModelProcessor {
@@ -56,7 +56,6 @@ impl ModelProcessor {
     ) -> Result<Self, Error> {
         let interval = parse_interval(interval_string);
         let mut options = parse_options(options_string);
-        options.entry("name").or_insert("hbos");
         options
             .entry("features")
             .or_insert("daddr,dport,dentropy,sentropy,diat,siat,spd,pcr,orient,stime");
@@ -67,18 +66,9 @@ impl ModelProcessor {
                 println!("{}: [{}={}]", command, key, value);
             }
         }
-        let name = options.get("name").expect("expected name");
         let features = options.get("features").expect("expected feature");
         let feature_list: Vec<String> = features.split(",").map(str::to_string).collect();
-        let quantile = options
-            .get("quantile")
-            .expect("expected quantile")
-            .parse::<f64>()
-            .unwrap();
 
-        if quantile >= 1.0 || quantile <= 0.0 {
-            return Err(Error::other("quantile option must be 0.0 < x < 1.0"));
-        }
         Ok(Self {
             command: command.to_string(),
             input: input.to_string(),
@@ -87,8 +77,7 @@ impl ModelProcessor {
             interval: interval,
             extension: extension_string.to_string(),
             feature_list: feature_list,
-            quantile: quantile,
-            name: name.to_string(),
+            quantile: 0.99999,
         })
     }
 }
@@ -117,14 +106,22 @@ impl FileProcessor for ModelProcessor {
     fn delete_files(&self) -> bool {
         false
     }
-    fn process(&mut self, file_list: &Vec<String>,  _schema_type: FileType) -> Result<(), Error> {
+    fn process(&mut self, file_list: &Vec<String>, _schema_type: FileType) -> Result<(), Error> {
         if Path::new(&self.model).exists() {
             if self.interval != Interval::ONCE {
                 // check if the current model is a day old, if so build a new one
-                let meta = fs::metadata(&self.model)
-                    .map_err(|e| Error::new(std::io::ErrorKind::Other, format!("failed to get metadata: {}", e)))?;
-                let ctime_local = meta.created()
-                    .map_err(|e| Error::new(std::io::ErrorKind::Other, format!("failed to get created time: {}", e)))?;
+                let meta = fs::metadata(&self.model).map_err(|e| {
+                    Error::new(
+                        std::io::ErrorKind::Other,
+                        format!("failed to get metadata: {}", e),
+                    )
+                })?;
+                let ctime_local = meta.created().map_err(|e| {
+                    Error::new(
+                        std::io::ErrorKind::Other,
+                        format!("failed to get created time: {}", e),
+                    )
+                })?;
                 let ctime_utc: DateTime<Utc> = ctime_local.into();
                 if Utc::now().day() == ctime_utc.day() {
                     // no change
@@ -169,7 +166,9 @@ impl FileProcessor for ModelProcessor {
             .map_err(|e| Error::new(std::io::ErrorKind::Other, format!("DuckDB error: {}", e)))?;
         let mut distinct_observation_models: Vec<DistinctObservation> = Vec::new();
         for record in record_iter {
-            distinct_observation_models.push(record.map_err(|e| Error::new(std::io::ErrorKind::Other, format!("DuckDB error: {}", e)))?);
+            distinct_observation_models.push(record.map_err(|e| {
+                Error::new(std::io::ErrorKind::Other, format!("DuckDB error: {}", e))
+            })?);
         }
 
         // build histograms
@@ -226,11 +225,19 @@ impl FileProcessor for ModelProcessor {
             let current_utc: DateTime<Utc> = Utc::now();
             let rfc3339_name: String = current_utc.to_rfc3339();
             let backup_file = format!("{}.{}", self.model, rfc3339_name.replace(":", "-"));
-            fs::rename(&self.model, &backup_file)
-                .map_err(|e| Error::new(std::io::ErrorKind::Other, format!("failed to rename backup model: {}", e)))?;
+            fs::rename(&self.model, &backup_file).map_err(|e| {
+                Error::new(
+                    std::io::ErrorKind::Other,
+                    format!("failed to rename backup model: {}", e),
+                )
+            })?;
         }
-        fs::rename(&tmp_output, &self.model)
-            .map_err(|e| Error::new(std::io::ErrorKind::Other, format!("failed to rename model: {}", e)))?;
+        fs::rename(&tmp_output, &self.model).map_err(|e| {
+            Error::new(
+                std::io::ErrorKind::Other,
+                format!("failed to rename model: {}", e),
+            )
+        })?;
         Ok(())
     }
 }

@@ -25,6 +25,7 @@ pub mod pipeline {
     use chrono::Timelike;
     use chrono::Utc;
     use dotenv::dotenv;
+    use duckdb::Connection;
     use std::collections::HashMap;
     use std::env;
     use std::env::VarError;
@@ -33,19 +34,89 @@ pub mod pipeline {
     use std::path::Path;
     use std::thread;
     use std::time::Duration;
-    const MAX_BATCH: usize = 16;
+    use std::time::Instant;
+    const MAX_BATCH: usize = 64;
 
-    pub mod batch;
+    pub mod aggregate;
     pub mod collector;
-    pub mod export; 
+    pub mod export;
     pub mod hbos;
     pub mod import;
-    pub mod tag;
-    pub mod metrics;
+    pub mod merge;
     pub mod model;
-    pub mod sample;
     pub mod rule;
-    
+    pub mod sample;
+    pub mod store;
+    pub mod tag;
+
+    static FIELDS: &'static [&'static str] = &[
+        "version",
+        "id",
+        "observe",
+        "stime",
+        "etime",
+        "dur",
+        "rtt",
+        "pcr",
+        "proto",
+        "saddr",
+        "daddr",
+        "sport",
+        "dport",
+        "iflags",
+        "uflags",
+        "stcpseq",
+        "dtcpseq",
+        "stcpurg",
+        "dtcpurg",
+        "svlan",
+        "dvlan",
+        "spkts",
+        "dpkts",
+        "sbytes",
+        "dbytes",
+        "sentropy",
+        "dentropy",
+        "siat",
+        "diat",
+        "sstdev",
+        "dstdev",
+        "ssmallpktcnt",
+        "dsmallpktcnt",
+        "slargepktcnt",
+        "dlargepktcnt",
+        "snonemptypktcnt",
+        "dnonemptypktcnt",
+        "sfirstnonemptycnt",
+        "dfirstnonemptycnt",
+        "smaxpktsize",
+        "dmaxpktsize",
+        "sstdevpayload",
+        "dstdevpayload",
+        "spd",
+        "reason",
+        "orient",
+        "tag",
+        "smac",
+        "dmac",
+        "scountry",
+        "dcountry",
+        "sasn",
+        "dasn",
+        "sasnorg",
+        "dasnorg",
+        "hbos_score",
+        "hbos_severity",
+        "hbos_map",
+        "ndpi_appid",
+        "ndpi_category",
+        "ndpi_risk_bits",
+        "ndpi_risk_score",
+        "ndpi_risk_severity",
+        "ndpi_risk_list",
+        "trigger",
+    ];
+
     #[derive(Debug, Clone, PartialEq)]
     pub enum Interval {
         ONCE,
@@ -55,7 +126,6 @@ pub mod pipeline {
         DAY,
     }
 
-    //#[repr(u32)] // This attribute specifies the underlying type for the enum
     #[derive(Debug, Clone, PartialEq)]
     pub enum FileType {
         UNKNOWN,
@@ -66,6 +136,14 @@ pub mod pipeline {
         PARQUET_FLOW4,
         PARQUET_FLOW5,
         UNSUPPORTED,
+    }
+
+    #[derive(Debug, Clone, PartialEq)]
+    pub enum StorageType {
+        UNSUPPORTED,
+        LOCAL,
+        S3,
+        MOTHERDUCK,
     }
 
     pub fn parse_interval(interval_string: &str) -> Interval {
@@ -127,18 +205,6 @@ pub mod pipeline {
             }
         }
     }
-
-    pub fn use_motherduck(output: &str) -> Result<bool, VarError> {
-        if output.starts_with("md:") {
-            dotenv().ok();
-            let motherduck_token = env::var("motherduck_token");
-            if motherduck_token.is_ok() {
-                return Ok(true);
-            }
-        }
-        return Ok(false);
-    }
-
     fn get_file_type(file: &String) -> Result<FileType, Error> {
         if file.ends_with(".yaf") {
             return Ok(FileType::IPFIX_YAF);
@@ -164,6 +230,17 @@ pub mod pipeline {
             return Err(Error::other("unsupported file type"));
         }
     }
+    pub fn use_motherduck(output: &str) -> Result<bool, VarError> {
+        if output.starts_with("md:") {
+            dotenv().ok();
+            let motherduck_token = env::var("motherduck_token");
+            if motherduck_token.is_ok() {
+                return Ok(true);
+            }
+        }
+        return Ok(false);
+    }
+
     pub trait FileProcessor {
         fn process(&mut self, file_list: &Vec<String>, schema_type: FileType) -> Result<(), Error>;
         fn socket(&mut self) -> Result<(), Error>;

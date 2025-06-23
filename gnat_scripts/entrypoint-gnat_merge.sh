@@ -21,7 +21,7 @@ if [ ! -z "${GNAT_OPTIONS}" ]; then
     COMMANDLINE_OPTIONS="${COMMANDLINE_OPTIONS} --options ${GNAT_OPTIONS}"
 fi
 
-/opt/gnat/bin/gnat_batch \
+/opt/gnat/bin/gnat_merge \
     --input ${GNAT_INPUT_DIR} \
     --output ${GNAT_OUTPUT_DIR} \
     --interval ${GNAT_INTERVAL} \

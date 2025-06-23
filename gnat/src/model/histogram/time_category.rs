@@ -95,12 +95,12 @@ impl TimeCategoryHistogram {
                 (epoch_micros % 1_000_000) as u32,
             )
             .unwrap();
-        if dt.hour() > 24 || dt.hour() < 0 {
-            panic!(
-                "ERROR:  TimeCategoryHistogram dt.hour => {} is invalid",
-                dt.hour()
-            )
-        }
+        //if dt.hour() > 24 || dt.hour() < 0 {
+        //    panic!(
+        //        "ERROR:  TimeCategoryHistogram dt.hour => {} is invalid",
+        //        dt.hour()
+        //    )
+        //}
         if let Some(frequency) = self.map.get(&dt.hour()) {
             return (*frequency + 1) as f64 / (self.count as f64 + 1.0);
         }

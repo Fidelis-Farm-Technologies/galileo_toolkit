@@ -6,6 +6,7 @@
  * See license information in LICENSE.
  */
 
+use crate::pipeline::FIELDS;
 use crate::utils::duckdb::{duckdb_open, duckdb_open_memory, duckdb_open_readonly};
 use chrono::{DateTime, TimeZone, Utc};
 use std::time::SystemTime;
@@ -13,8 +14,9 @@ use std::time::SystemTime;
 use crate::pipeline::parse_interval;
 use crate::pipeline::parse_options;
 use crate::pipeline::FileProcessor;
-use crate::pipeline::Interval;
 use crate::pipeline::FileType;
+use crate::pipeline::Interval;
+use duckdb::Connection;
 use std::io::Error;
 
 pub struct ExportProcessor {
@@ -22,6 +24,7 @@ pub struct ExportProcessor {
     pub input: String,
     pub output: String,
     pub pass: String,
+    pub field_list: String,
     pub interval: Interval,
     pub extension: String,
     pub format: String,
@@ -40,7 +43,7 @@ impl ExportProcessor {
         let interval = parse_interval(interval_string);
         let mut options = parse_options(options_string);
         options.entry("format").or_insert("json");
-
+        options.entry("fields").or_insert("");
         for (key, value) in &options {
             if !value.is_empty() {
                 println!("{}: [{}={}]", command, key, value);
@@ -48,13 +51,31 @@ impl ExportProcessor {
         }
 
         let format = options.get("format").expect("expected format");
+        let field_list = options.get("fields").expect("expected format");
+
+        let list: Vec<String> = field_list.split(",").map(str::to_string).collect();
+        for field in &list {
+            if !FIELDS.contains(&field.as_str()) {
+                let error_message = format!("invalid field: {}", field);
+                return Err(Error::other("field list contains invalid field"));
+            }
+        }
+
+        // Validate the output directory
+        if !output.is_empty() {
+            let output_path = std::path::Path::new(output);
+            if !output_path.exists() {
+                return Err(Error::other("output directory does not exist"));
+            }
+        }
 
         Ok(Self {
             command: command.to_string(),
             input: input.to_string(),
             output: output.to_string(),
             pass: pass.to_string(),
-            interval,
+            field_list: field_list.to_string(),
+            interval: interval,
             extension: extension_string.to_string(),
             format: format.to_string(),
         })
@@ -79,6 +100,7 @@ impl FileProcessor for ExportProcessor {
     fn get_file_extension(&self) -> &String {
         &self.extension
     }
+
     fn socket(&mut self) -> Result<(), Error> {
         Err(Error::other("socket function unsupported"))
     }

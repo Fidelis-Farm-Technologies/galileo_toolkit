@@ -1,4 +1,4 @@
-![galileo](img/gnat-light.pnggnat-light.png#gh-light-mode-only)
+![galileo](img/gnat-light.png#gh-light-mode-only)
 ![galileo](img/gnat-dark.png#gh-dark-mode-only)
 
 

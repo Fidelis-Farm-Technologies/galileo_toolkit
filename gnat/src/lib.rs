@@ -180,9 +180,7 @@ pub mod pipeline {
             let now = Utc::now();
             match interval {
                 Interval::SECOND => {
-                    if now.second() != last.second() {
-                        return true;
-                    }
+                    return true;
                 }
                 Interval::MINUTE => {
                     if now.minute() != last.minute() {
@@ -342,9 +340,16 @@ pub mod pipeline {
                     //
                     // process files
                     //
-
-                    let status = self.process(&file_list, schema_type).is_ok();
-
+                    let start = Instant::now();
+                    match self.process(&file_list, schema_type) {
+                        Ok(_) => {}
+                        Err(error) => {
+                            eprintln!("{}: processing failed: {}", command, error);
+                            std::process::exit(exitcode::IOERR);
+                        }
+                    }
+                    println!("{}: elapsed time: {:?}", command, start.elapsed());
+                    
                     //
                     // move files to pass or delete
                     //
@@ -355,14 +360,12 @@ pub mod pipeline {
                             }
                         } else {
                             let mut pass_file = format!("{}/{}", &pass, file);
-                            if !status {
-                                pass_file.push_str(".error");
-                            }
+
                             fs::rename(file.clone(), pass_file.clone())
                                 .expect("failed to rename file");
                         }
                     }
-                    println!("{}: done.", command);
+
                     if more_to_process {
                         continue;
                     }

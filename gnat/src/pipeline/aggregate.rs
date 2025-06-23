@@ -14,7 +14,6 @@ use chrono::{TimeZone, Utc};
 use duckdb::{Appender, Connection, DropBehavior};
 use std::fs;
 use std::process;
-use std::time::Instant;
 use std::time::SystemTime;
 
 use crate::pipeline::parse_interval;
@@ -164,7 +163,7 @@ impl AggregationProcessor {
             input: input.to_string(),
             output: output.to_string(),
             pass: pass.to_string(),
-            interval,
+            interval: interval,
             extension: extension_string.to_string(),
             retention,
             table_list,
@@ -249,12 +248,11 @@ impl FileProcessor for AggregationProcessor {
                 "CREATE TABLE IF NOT EXISTS metrics AS SELECT * FROM read_parquet('{}')",
                 tmp_parquet
             );
-            let start = Instant::now();
+  
             self.db_conn.execute_batch(&sql_export).map_err(|e| {
                 Error::new(std::io::ErrorKind::Other, format!("DuckDB error: {}", e))
             })?;
-            let duration = start.elapsed();
-            println!("{}: elapsed time: {:?}", self.command, duration);
+
             fs::remove_file(tmp_parquet).map_err(|e| {
                 Error::new(
                     std::io::ErrorKind::Other,

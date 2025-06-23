@@ -28,7 +28,7 @@ struct Args {
 
     #[arg(long)]
     interval: Option<String>,
-   
+
 }
 
 fn main() -> Result<(), Box<dyn Error>> {

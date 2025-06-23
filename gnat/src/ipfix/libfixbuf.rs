@@ -6,7 +6,6 @@
  * See license information in LICENSE.
  */
 
-
 extern crate c_string;
 extern crate libc;
 
@@ -16,6 +15,7 @@ use std::os::raw::c_char;
 
 extern "C" {
     fn libfixbuf_file_import(
+        command: *const c_char,
         observation: *const c_char,
         input_file: *const c_char,
         output_file: *const c_char,
@@ -24,6 +24,7 @@ extern "C" {
     ) -> i32;
 
     fn libfixbuf_socket_import(
+        command: *const c_char,
         observation: *const c_char,
         host_spec: *const c_char,
         port_spec: *const c_char,
@@ -41,13 +42,14 @@ extern "C" {
 }
 
 pub fn unsafe_ipfix_file_import(
+    command: &str,
     input_file: &str,
     output_dir: &str,
     observation: &str,
     asn: &str,
     country: &str,
 ) -> i32 {
-
+    let c_command = CString::new(command).expect("converting to c_string");
     let c_observation = CString::new(observation).expect("converting to c_string");
     let c_asn_file = CString::new(asn).expect("converting to c_string");
     let c_country_file = CString::new(country).expect("converting to c_string");
@@ -56,6 +58,7 @@ pub fn unsafe_ipfix_file_import(
 
     unsafe {
         libfixbuf_file_import(
+            c_command.as_c_str().as_ptr(),
             c_observation.as_c_str().as_ptr(),
             c_input_file.as_c_str().as_ptr(),
             c_output_dir.as_c_str().as_ptr(),
@@ -66,31 +69,33 @@ pub fn unsafe_ipfix_file_import(
 }
 
 pub fn unsafe_ifpix_socket_import(
-    observation_tag: &String,
-    host_spec: &String,
-    port_spec: &String,
-    transport_spec: &String,
-    ssl_ca_file: &String,
-    ssl_cert_file: &String,
-    ssl_key_file: &String,
-    ssl_key_pass: &String,
+    command: &str,
+    observation_tag: &str,
+    host_spec: &str,
+    port_spec: &str,
+    transport_spec: &str,
+    ssl_ca_file: &str,
+    ssl_cert_file: &str,
+    ssl_key_file: &str,
+    ssl_key_pass: &str,
     rotate_interval: u32,
     verbose_mode: bool,
-    output_spec: &String,
-    asn_spec: &String,
-    country_spec: &String,
+    output_spec: &str,
+    asn_spec: &str,
+    country_spec: &str,
 ) -> i32 {
-    let c_observation = CString::new(observation_tag.as_str()).expect("converting to c_string");
-    let c_host_spec = CString::new(host_spec.as_str()).expect("converting to c_string");
-    let c_port_spec = CString::new(port_spec.as_str()).expect("converting to c_string");
-    let c_transport_spec = CString::new(transport_spec.as_str()).expect("converting to c_string");
-    let c_ssl_ca_file = CString::new(ssl_ca_file.as_str()).expect("converting to c_string");
-    let c_ssl_cert_file = CString::new(ssl_cert_file.as_str()).expect("converting to c_string");
-    let c_ssl_key_file = CString::new(ssl_key_file.as_str()).expect("converting to c_string");
-    let c_ssl_key_pass = CString::new(ssl_key_pass.as_str()).expect("converting to c_string");
-    let c_output_spec = CString::new(output_spec.as_str()).expect("converting to c_string");
-    let c_asn_spec = CString::new(asn_spec.as_str()).expect("converting to c_string");
-    let c_country_spec = CString::new(country_spec.as_str()).expect("converting to c_string");
+    let c_command = CString::new(command).expect("converting to c_string");
+    let c_observation = CString::new(observation_tag).expect("converting to c_string");
+    let c_host_spec = CString::new(host_spec).expect("converting to c_string");
+    let c_port_spec = CString::new(port_spec).expect("converting to c_string");
+    let c_transport_spec = CString::new(transport_spec).expect("converting to c_string");
+    let c_ssl_ca_file = CString::new(ssl_ca_file).expect("converting to c_string");
+    let c_ssl_cert_file = CString::new(ssl_cert_file).expect("converting to c_string");
+    let c_ssl_key_file = CString::new(ssl_key_file).expect("converting to c_string");
+    let c_ssl_key_pass = CString::new(ssl_key_pass).expect("converting to c_string");
+    let c_output_spec = CString::new(output_spec).expect("converting to c_string");
+    let c_asn_spec = CString::new(asn_spec).expect("converting to c_string");
+    let c_country_spec = CString::new(country_spec).expect("converting to c_string");
 
     let mut verbose: u32 = 0;
     if verbose_mode {
@@ -99,6 +104,7 @@ pub fn unsafe_ifpix_socket_import(
 
     unsafe {
         libfixbuf_socket_import(
+             c_command.as_c_str().as_ptr(),
             c_observation.as_c_str().as_ptr(),
             c_host_spec.as_c_str().as_ptr(),
             c_port_spec.as_c_str().as_ptr(),

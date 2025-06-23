@@ -23,6 +23,7 @@ use crate::pipeline::FileType;
 use crate::pipeline::Interval;
 use std::io::Error;
 
+
 pub const TAG_LIMIT: u8 = 8;
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -195,6 +196,7 @@ impl FileProcessor for TagProcessor {
         true
     }
     fn process(&mut self, file_list: &Vec<String>, _schema_type: FileType) -> Result<(), Error> {
+
         let parquet_list = file_list
             .iter()
             .map(|file| format!("'{}'", file))
@@ -219,6 +221,7 @@ impl FileProcessor for TagProcessor {
         }
 
         self.export_parquet_file(&mem_conn);
+
         Ok(())
     }
 }

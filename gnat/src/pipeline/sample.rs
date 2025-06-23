@@ -68,7 +68,7 @@ impl SampleProcessor {
             input: input.to_string(),
             output: output.to_string(),
             pass: pass.to_string(),
-            interval,
+            interval: interval,
             extension: extension_string.to_string(),
             retention,
             percent: percent as f64,
@@ -114,11 +114,12 @@ impl SampleProcessor {
             "COPY (SELECT * FROM read_parquet({})
                 WHERE (proto='tcp' OR proto='udp') 
                   AND (sfirstnonemptycnt > 0 OR dfirstnonemptycnt > 0)
-                  AND date_trunc('day',stime) > date_add(date_trunc('day',stime), - INTERVAL {} DAY))
-                  AND trigger = 0 
+                  AND date_trunc('day',stime) > date_add(date_trunc('day',stime), - INTERVAL {} DAY)
+                  AND trigger = 0)
                 TO '{}' (FORMAT 'parquet', CODEC 'snappy', ROW_GROUP_SIZE 100_000);",
             parquet_list, self.retention, tmp_filename
         );
+        //println!("{}: {}", self.command,sql_command);
         conn.execute_batch(&sql_command)
             .map_err(|e| Error::new(std::io::ErrorKind::Other, format!("DuckDB error: {}", e)))?;
 
@@ -205,7 +206,7 @@ impl SampleProcessor {
                 Error::new(std::io::ErrorKind::Other, format!("renaming error: {}", e))
             })?;
         }
-        println!("{}: sampled new records.", self.command);
+        println!("{}: sampled records.", self.command);
         Ok(())
     }
 }

@@ -132,6 +132,7 @@ impl FileProcessor for CollectorProcessor {
     }
     fn socket(&mut self) -> Result<(), Error> {
         let status = unsafe_ifpix_socket_import(
+            &self.command,
             &self.observation,
             &self.host,
             &self.port,

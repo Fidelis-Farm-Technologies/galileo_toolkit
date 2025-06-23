@@ -15,8 +15,7 @@ use chrono::{DateTime, TimeZone, Utc};
 use duckdb::{params, Appender, DropBehavior};
 use std::fs;
 use std::process;
-use std::time::Instant;
-use std::time::SystemTime;
+
 
 use crate::pipeline::parse_interval;
 use crate::pipeline::parse_options;
@@ -59,7 +58,7 @@ impl MergeProcessor {
             input: input.to_string(),
             output: output.to_string(),
             pass: pass.to_string(),
-            interval,
+            interval: interval,
             extension: extension_string.to_string(),
         })
     }
@@ -121,7 +120,6 @@ impl FileProcessor for MergeProcessor {
                 format!("File rename error: {}", e),
             )
         })?;
-
         Ok(())
     }
 }

@@ -359,6 +359,7 @@ ycCloseReader(
 }
 
 int libfixbuf_file_import(
+    const char *command,    
     const char *observation,
     const char *input_file,
     const char *output_dir,
@@ -407,7 +408,7 @@ int libfixbuf_file_import(
     adrv.app_close_sink = CloseFileSink;
     adrv.app_process = ReaderToFileSink;
 
-    g_message("libfixbuf_file_import: staring up");
+    g_message("%s: starting up", command);
     if (!mio_source_init_app(&source, mio_ov_in, MIO_T_APP, &gnat, &err))
     {
         if (err && err->message)
@@ -454,17 +455,17 @@ int libfixbuf_file_import(
         gnat.observation = NULL;
     }
 
-    g_message("libfixbuf_file_import: shutting down");
+    g_message("%s: shutting down", command);
 
     if (gnat.ipfix_flows_skipped > 0)
     {
-        fprintf(stderr, "\t%s: processed [%s] with %llu flows [skipped %llu IPv6 Hop-by-Hop]\n",
-                __FUNCTION__, input_file, (long long)gnat.ipfix_flows, (long long)gnat.ipfix_flows_skipped);
+        fprintf(stderr, "%s: processed [%s] with %llu flows [skipped %llu IPv6 Hop-by-Hop]\n",
+                command, input_file, (long long)gnat.ipfix_flows, (long long)gnat.ipfix_flows_skipped);
     }
     else
     {
-        fprintf(stdout, "\t%s: processed [%s] with %llu flows\n",
-                __FUNCTION__, input_file, (long long)gnat.ipfix_flows);
+        fprintf(stdout, "%s: processed [%s] with %llu flows\n",
+                command, input_file, (long long)gnat.ipfix_flows);
     }
 
     fflush(stdout);
@@ -472,6 +473,7 @@ int libfixbuf_file_import(
 }
 
 int libfixbuf_socket_import(
+    const char *command,
     const char *observation,
     const char *host,
     const char *port,
@@ -544,7 +546,7 @@ int libfixbuf_socket_import(
     }
     else
     {
-        air_opterr("libfixbuf_socket_import: unsupported IPFIX transport protocol %s", transport);
+        air_opterr("%s: unsupported IPFIX transport protocol %s", command, transport);
     }
 
     /* set up logging */
@@ -579,13 +581,13 @@ int libfixbuf_socket_import(
     adrv.app_close_sink = CloseFileSink;
     adrv.app_process = SocketToFileSink;
 
-    g_message("libfixbuf_socket_import: starting up");
+    g_message("%s: starting up", command);
 
     /* create a source around a listener */
     if (!mio_source_init_app(&source, mio_ov_in, MIO_T_APP, &gnat, &err))
     {
         if (err && err->message)
-            air_opterr("libfixbuf_socket_import: cannot set up MIO input: %s", err->message);
+            air_opterr("%s: cannot set up MIO input: %s", command,err->message);
     }
 
     g_message("libfixbuf_socket_import: loop");
@@ -602,7 +604,7 @@ int libfixbuf_socket_import(
         rv = 1;
     }
 
-    g_message("libfixbuf_socket_import: shutting down");
+    g_message("%s: shutting down", command);
     if (g_collector_spec.host)
         free(g_collector_spec.host);
     if (g_collector_spec.svc)
@@ -625,6 +627,6 @@ int libfixbuf_socket_import(
     if (gnat.observation)
         free(gnat.observation);
 
-    g_message("\t%s: processed %lu flows into %lu files", __FUNCTION__, gnat.ipfix_flows, gnat.ipfix_files);
+    g_message("%s: processed %lu flows into %lu files", command, gnat.ipfix_flows, gnat.ipfix_files);
     return rv;
 }

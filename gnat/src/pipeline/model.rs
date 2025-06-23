@@ -127,6 +127,10 @@ impl FileProcessor for ModelProcessor {
                     // no change
                     return Ok(());
                 }
+                println!(
+                    "{}: overwriting existing model file: {}",
+                    self.command, self.model
+                );
             }
         }
 

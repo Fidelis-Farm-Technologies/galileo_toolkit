@@ -272,6 +272,8 @@ impl FileProcessor for HbosProcessor {
         true
     }
     fn process(&mut self, file_list: &Vec<String>, _schema_type: FileType) -> Result<(), Error> {
+        let _ = self.load_if_not_already();
+
         // Use iterator and join for file list formatting
         let parquet_list = file_list
             .iter()
@@ -288,23 +290,6 @@ impl FileProcessor for HbosProcessor {
         let final_filename = format!("{}/{}", self.output, tmp_filename.trim_start_matches('.'));
 
         let mut db_out = duckdb_open_memory(2);
-
-        match self.load_if_not_already() {
-            Err(e) => {
-                println!("{}: {}", self.command, e);
-                let sql_command = format!(
-                    "COPY (SELECT * FROM read_parquet({})) TO '{}' (FORMAT 'parquet', CODEC 'snappy', ROW_GROUP_SIZE 100_000);",
-                    parquet_list, tmp_filename
-                );
-                db_out.execute_batch(&sql_command).map_err(|e| {
-                    Error::new(std::io::ErrorKind::Other, format!("DuckDB error: {}", e))
-                })?;
-                fs::rename(&tmp_filename, &final_filename)?;
-                return Ok(());
-            }
-            _ => {}
-        }
-
         {
             let mut db_in = duckdb_open_memory(2);
             let sql_command = format!(

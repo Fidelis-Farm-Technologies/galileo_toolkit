@@ -1126,7 +1126,7 @@ ReaderToFileSink(
         memset(&ipfix_record, 0, yaf_rec_len);
     }
 
-    if (g_error_matches(*err, FB_ERROR_DOMAIN, FB_ERROR_EOF))
+    if (g_error_matches(*err, FB_ERROR_DOMAIN,FB_ERROR_EOF))
     {
         /* EOF on a single collector not an issue. */
         *flags |= (MIO_F_CTL_SINKCLOSE | MIO_F_CTL_TERMINATE);
@@ -1134,7 +1134,21 @@ ReaderToFileSink(
         return TRUE;
     }
 
-    fprintf(stderr, "%s: bad message\n", __FUNCTION__);
+    if (g_error_matches(*err, FB_ERROR_DOMAIN, FB_ERROR_IPFIX))
+    {
+        /*  
+            A message was received larger than the collector buffer size.
+            Usually when YAF is stopped adbruptly, the collector
+            will receive a message that is larger than the buffer size.
+
+            Just skip the file and continue processing the next one.
+         */
+        *flags |= (MIO_F_CTL_SINKCLOSE | MIO_F_CTL_TERMINATE);
+        g_clear_error(err);
+        return TRUE;
+    }
+
+    //printf(stderr, "%s: invalid format\n", __FUNCTION__);
     /* bad message */
     sink->active = FALSE;
     *flags |= (MIO_F_CTL_SINKCLOSE | MIO_F_CTL_TERMINATE | MIO_F_CTL_ERROR);

@@ -23,13 +23,16 @@
 #include <ctype.h>
 
 
-int ipfix_file_import(const char *observation,
+int ipfix_file_import(
+                 const char *command,
+                 const char *observation,
                  const char *input_file,
                  const char *output_dir,
                  const char *asn_file,
                  const char *country_file);
 
 int ipfix_socket_import(
+    const char *command,
     const char *observation,
     const char *host,
     const char *port,

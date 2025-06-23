@@ -115,6 +115,7 @@ impl FileProcessor for ImportProcessor {
                 return Err(Error::other("unsupported schema version"));
             }
             let import_result = unsafe_ipfix_file_import(
+                &self.command,
                 file,
                 &self.output,
                 &observation,

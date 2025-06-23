@@ -20,7 +20,6 @@ use chrono::{DateTime, TimeZone, Utc};
 use duckdb::{params, Appender, DropBehavior};
 use std::fs;
 use std::process;
-use std::time::Instant;
 use std::time::SystemTime;
 
 use crate::pipeline::parse_interval;
@@ -108,7 +107,7 @@ impl StoreProcessor {
             input: input.to_string(),
             output: output.to_string(),
             pass: pass.to_string(),
-            interval,
+            interval: interval,
             extension: extension_string.to_string(),
             storage_type: storage_type,
             db_conn: db_conn,
@@ -157,7 +156,7 @@ impl StoreProcessor {
     }
     fn upload_to_motherduck(&mut self, file_list: &Vec<String>) -> Result<(), Error> {
         println!("{}: uploading to motherduck...", self.command);
-        let start = Instant::now();
+
         for parquet_file in file_list.clone().into_iter() {
             let sql_export = format!(
                 "INSERT INTO flow SELECT * FROM read_parquet('{}')",
@@ -168,8 +167,6 @@ impl StoreProcessor {
                 .expect("execute_batch()");
             println!("{}:\t{}", self.command, parquet_file);
         }
-        let duration = start.elapsed();
-        println!("{}: elapsed time: {:?}", self.command, duration);
 
         Ok(())
     }
@@ -206,13 +203,12 @@ impl StoreProcessor {
             })
             .expect("query_map()");
 
-        let start = Instant::now();
+        let push_time = SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .expect("now()");
 
         for dtg_entry in dtg_iter {
             let dtg = dtg_entry.unwrap();
-            let push_time = SystemTime::now()
-                .duration_since(SystemTime::UNIX_EPOCH)
-                .expect("now()");
             println!(
                 "{}: uploading [{}/year={}/month={}/day={}/hour={}/{}{:02}{:02}{:02}]...",
                 self.command,
@@ -243,9 +239,6 @@ impl StoreProcessor {
                 .expect("S3 execute upload");
         }
 
-        let duration = start.elapsed();
-        println!("{}: elapsed time: {:?}", self.command, duration);
-
         Ok(())
     }
     fn local_storage(&mut self, file_list: &Vec<String>) -> Result<(), Error> {
@@ -261,9 +254,13 @@ impl StoreProcessor {
             .join(",");
         let parquet_list = format!("[{}]", parquet_list);
 
+        let push_time = SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .expect("now()");
+
         let sql_command = format!(
-                "COPY (SELECT * year(stime) AS year, month(stime) AS month, day(stime) as day, hour(stime) as hour  FROM read_parquet({})) 
-                 TO '{}' (FORMAT 'parquet', PARTITION_BY(year, month, day, hour), CODEC 'snappy', ROW_GROUP_SIZE 100_000);",
+                "COPY (SELECT *, year(stime) AS year, month(stime) AS month, day(stime) as day, hour(stime) as hour  FROM read_parquet({})) 
+                 TO '{}' (FORMAT 'parquet', CODEC 'snappy', ROW_GROUP_SIZE 100_000, PARTITION_BY(year, month, day, hour), APPEND, FILENAME_PATTERN 'gnat-{{uuid}}');",
                 parquet_list, self.output
             );
         self.db_conn
@@ -314,7 +311,6 @@ impl FileProcessor for StoreProcessor {
                 return Err(Error::other("unsupported storage type"));
             }
         }
-
         Ok(())
     }
 }

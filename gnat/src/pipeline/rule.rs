@@ -18,7 +18,7 @@ use crate::model::histogram::{
 };
 use crate::model::table::DistinctFeature;
 use crate::model::table::DistinctObservation;
-use crate::pipeline::{use_motherduck, FileType};
+use crate::pipeline::FileType;
 use crate::utils::duckdb::{duckdb_open, duckdb_open_memory, duckdb_open_readonly};
 use chrono::{DateTime, TimeZone, Utc};
 use std::path::Path;
@@ -77,8 +77,6 @@ pub struct RuleProcessor {
     pub rules: Vec<String>,
     pub histogram_map: HashMap<String, HistogramModels>,
     pub distinct_features: Vec<String>,
-    pub md_conn: Connection,
-    pub use_motherduck: bool,
 }
 
 impl RuleProcessor {
@@ -112,13 +110,6 @@ impl RuleProcessor {
         let distinct_features: Vec<String> = Vec::new();
         let sql_table_schema = String::from("");
 
-        let use_motherduck = use_motherduck(output).expect("motherduck env");
-        if use_motherduck {
-            println!("{}: [motherduck={}]", command, use_motherduck);
-            md_conn = duckdb_open(output, 2);
-            println!("{}: connection established with {}", command, output);
-        }
-
         Ok(Self {
             command: command.to_string(),
             input: input.to_string(),
@@ -131,8 +122,6 @@ impl RuleProcessor {
             rules: rules,
             histogram_map: histogram_map,
             distinct_features: distinct_features,
-            md_conn: md_conn,
-            use_motherduck: use_motherduck,
         })
     }
 
@@ -405,9 +394,7 @@ impl FileProcessor for RuleProcessor {
             println!("{}: {}", self.command, e);
             return Ok(());
         }
-        self.md_conn
-            .execute_batch(MD_FLOW_TABLE)
-            .map_err(|e| Error::new(std::io::ErrorKind::Other, format!("DuckDB error: {}", e)))?;
+     
         // Use iterator and join for file list formatting
         let parquet_list = file_list
             .iter()
@@ -427,15 +414,12 @@ impl FileProcessor for RuleProcessor {
 
         // apply rules to the flow table
         println!("{}: applying {} rules...", self.command, self.rules.len());
-        let start = Instant::now();
         for rule in self.rules.iter() {
             let sql_command = format!("UPDATE flow {};", rule);
             db_in.execute_batch(&sql_command).map_err(|e| {
                 Error::new(std::io::ErrorKind::Other, format!("DuckDB error: {}", e))
             })?;
         }
-        let duration = start.elapsed();
-        println!("{}: elapsed time: {:?}", self.command, duration);
 
         // load distinct observation models
         println!("{}: determining observation points...", self.command);
@@ -534,32 +518,13 @@ impl FileProcessor for RuleProcessor {
         }
         let _ = db_out.close();
 
-        if self.use_motherduck {
-            println!("{}: uploading to motherduck...", self.command);
-            let sql_export = format!(
-                "INSERT INTO flow SELECT * FROM read_parquet('{}')",
-                tmp_parquet_filename
-            );
-            let start = Instant::now();
-            self.md_conn.execute_batch(&sql_export).map_err(|e| {
-                Error::new(std::io::ErrorKind::Other, format!("DuckDB error: {}", e))
-            })?;
-            let duration = start.elapsed();
-            println!("{}: elapsed time: {:?}", self.command, duration);
-            fs::remove_file(&tmp_parquet_filename).map_err(|e| {
-                Error::new(
-                    std::io::ErrorKind::Other,
-                    format!("remove_file error: {}", e),
-                )
-            })?;
-        } else {
-            fs::rename(&tmp_parquet_filename, &parquet_filename).map_err(|e| {
-                Error::new(
-                    std::io::ErrorKind::Other,
-                    format!("renaming temporary file error: {}", e),
-                )
-            })?;
-        }
+        fs::rename(&tmp_parquet_filename, &parquet_filename).map_err(|e| {
+            Error::new(
+                std::io::ErrorKind::Other,
+                format!("renaming temporary file error: {}", e),
+            )
+        })?;
+
         Ok(())
     }
 }

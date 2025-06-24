@@ -31,7 +31,7 @@ if [ -z "${GNAT_EXPORT_INTERVAL}" ]; then
 fi
 
 if [ -z "${GNAT_OPTIONS}" ]; then
-    GNAT_OPTIONS="--entropy --ndpi --verbose  --mac --max-payload=4096 --flow-stats --no-template-metadata --no-element-metadata --no-tombstone --active-timeout 180 --idle-timeout 60 --out ${GNAT_OUTPUT_DIR}/${GNAT_OBSERVATION_TAG} --lock"
+    GNAT_OPTIONS="--entropy --ndpi --verbose  --mac --max-payload=8192 --flow-stats --no-template-metadata --no-element-metadata --no-tombstone --active-timeout 180 --idle-timeout 60 --out ${GNAT_OUTPUT_DIR}/${GNAT_OBSERVATION_TAG} --lock"
     # GNAT_OPTIONS="--entropy --ndpi --verbose --max-payload=2048 --flow-stats --mac --active-timeout 180 --idle-timeout 60 --out ${GNAT_OUTPUT_DIR}/${GNAT_OBSERVATION_TAG} --lock"
 fi
 

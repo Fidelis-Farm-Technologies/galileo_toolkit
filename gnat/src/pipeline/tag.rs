@@ -23,27 +23,31 @@ use crate::pipeline::FileType;
 use crate::pipeline::Interval;
 use std::io::Error;
 
-
 pub const TAG_LIMIT: u8 = 8;
 
 #[derive(Clone, Serialize, Deserialize)]
 pub struct TagStructure {
     tag: String,
-    observe: String,
     #[serde(skip)]
-    proto: String,
+    observe: Option<String>,
     #[serde(skip)]
-    saddr: String,
+    proto: Option<String>,
     #[serde(skip)]
-    sport: u16,
+    saddr: Option<String>,
+    #[serde(default = "zero_port")]
+    sport: Option<u16>,
     #[serde(skip)]
-    daddr: String,
+    daddr: Option<String>,
+    #[serde(default = "zero_port")]
+    dport: Option<u16>,
     #[serde(skip)]
-    dport: u16,
+    ndpi_appid: Option<String>,
     #[serde(skip)]
-    ndpi_appid: String,
-    #[serde(skip)]
-    orient: String,
+    orient: Option<String>,
+}
+
+fn zero_port() -> Option<u16> {
+    Some(0)
 }
 
 pub struct TagProcessor {
@@ -101,53 +105,53 @@ impl TagProcessor {
                 "SET tag = list_concat(tag, ['{}']) WHERE tag IS NULL OR NOT list_has_any(tag,['{}'])",
                 rule.tag,  rule.tag
             );
-            if !rule.observe.is_empty() {
+
+            if let Some(observe) = rule.observe {
                 rule_command.push_str("AND observe ^@ '");
-                rule_command.push_str(&rule.observe);
+                rule_command.push_str(&observe);
                 rule_command.push_str("'");
             }
 
-            if !rule.proto.is_empty() {
+            if let Some(proto) = rule.proto {
                 rule_command.push_str("AND proto = '");
-                rule_command.push_str(&rule.proto);
+                rule_command.push_str(&proto);
                 rule_command.push_str("'");
             }
 
-            if !rule.saddr.is_empty() {
+            if let Some(saddr) = rule.saddr {
                 rule_command.push_str("AND saddr ^@ '");
-                rule_command.push_str(&rule.saddr);
+                rule_command.push_str(&saddr);
                 rule_command.push_str("'");
             }
 
-            if rule.sport != 0 {
+            if let Some(sport) = rule.sport {
                 rule_command.push_str("AND sport = ");
-                rule_command.push_str(&rule.sport.to_string());
+                rule_command.push_str(&sport.to_string());
             }
 
-            if !rule.daddr.is_empty() {
+            if let Some(daddr) = rule.daddr {
                 rule_command.push_str("AND daddr ^@ '");
-                rule_command.push_str(&rule.daddr);
+                rule_command.push_str(&daddr);
                 rule_command.push_str("'");
             }
 
-            if rule.dport != 0 {
+            if let Some(dport) = rule.dport {
                 rule_command.push_str("AND dport = ");
-                rule_command.push_str(&rule.dport.to_string());
+                rule_command.push_str(&dport.to_string());
             }
 
-            if !rule.ndpi_appid.is_empty() {
+            if let Some(ndpi_appid) = rule.ndpi_appid {
                 rule_command.push_str("AND ndpi_appid ^@ '");
-                rule_command.push_str(&rule.ndpi_appid);
+                rule_command.push_str(&ndpi_appid);
                 rule_command.push_str("'");
             }
 
-            if !rule.orient.is_empty() {
+            if let Some(orient) = rule.orient {
                 rule_command.push_str("AND orient ^@ '");
-                rule_command.push_str(&rule.orient);
+                rule_command.push_str(&orient);
                 rule_command.push_str("'");
             }
 
-            //println!("rule: {}", rule_command);
             tag_rules.push(rule_command);
         }
 
@@ -196,7 +200,6 @@ impl FileProcessor for TagProcessor {
         true
     }
     fn process(&mut self, file_list: &Vec<String>, _schema_type: FileType) -> Result<(), Error> {
-
         let parquet_list = file_list
             .iter()
             .map(|file| format!("'{}'", file))

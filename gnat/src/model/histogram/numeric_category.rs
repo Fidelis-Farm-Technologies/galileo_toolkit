@@ -19,7 +19,7 @@ use std::collections::HashMap;
 pub struct NumericCategoryHistogram {
     name: String,
     hash_size: i64,
-    count: i64,
+    count: usize,
     map: HashMap<i64, i64>,
 }
 
@@ -90,25 +90,25 @@ impl NumericCategoryHistogram {
         1.0 / (self.count as f64 + 1.0)
     }
 
-    pub fn build(&mut self, db: &Connection, observe: &String, vlan: i64, proto: &String) {
+    pub fn build(&mut self, db: &Connection, observe: &String, vlan: i64, proto: &String) -> Result<(), duckdb::Error> {
         let sql_command = format!(
             "SELECT {} FROM flow WHERE observe='{}' AND dvlan = {} AND proto='{}';",
             self.name, observe, vlan, proto
         );
-        let mut stmt = db.prepare(&sql_command).expect("build numeric_category");
+        let mut stmt = db.prepare(&sql_command)?;
 
         let record_iter = stmt
             .query_map([], |row| {
                 Ok(NumericCategoryRecord {
                     value: row.get(0).expect("missing value"),
                 })
-            })
-            .expect("numeric_category map");
+            })?;
 
         for record in record_iter {
-            let record = record.unwrap();
+            let record = record?;
             self.add(record.value);
         }
+        Ok(())
     }
     pub fn serialize(&self, conn: &mut Connection, observe: &String, vlan: i64, proto: &String) {
         conn.execute_batch(HISTOGRAM_SUMMARY).unwrap();
@@ -155,7 +155,7 @@ impl NumericCategoryHistogram {
         let mut histogram_category = NumericCategoryHistogram {
             name: summary.name,
             hash_size: summary.hash_size as i64,
-            count: summary.count as i64,
+            count: summary.count,
             map,
         };
 

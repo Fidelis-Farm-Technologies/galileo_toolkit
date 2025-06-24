@@ -15,6 +15,7 @@ pub mod utils {
 }
 
 pub mod model {
+    pub mod binning;
     pub mod histogram;
     pub mod table;
 }

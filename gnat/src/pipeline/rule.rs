@@ -182,7 +182,6 @@ impl RuleProcessor {
                 string_category: string_cat_map,
                 ipaddr_category: ipadd_cat_map,
                 time_category: time_category_map,
-                quantile: 0.0,
                 low: 0.0,
                 medium: 0.0,
                 high: 0.0,

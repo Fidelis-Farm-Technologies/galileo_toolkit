@@ -78,12 +78,7 @@ impl TimeCategoryHistogram {
                 (epoch_micros % 1_000_000) as u32,
             )
             .unwrap();
-        if dt.hour() > 24 || dt.hour() < 0 {
-            panic!(
-                "ERROR:  TimeCategoryHistogram dt.hour => {} is invalid",
-                dt.hour()
-            )
-        }
+
         let bin_count = self.map.entry(dt.hour()).or_insert(0);
         *bin_count += 1;
         self.count += 1;
@@ -95,12 +90,7 @@ impl TimeCategoryHistogram {
                 (epoch_micros % 1_000_000) as u32,
             )
             .unwrap();
-        //if dt.hour() > 24 || dt.hour() < 0 {
-        //    panic!(
-        //        "ERROR:  TimeCategoryHistogram dt.hour => {} is invalid",
-        //        dt.hour()
-        //    )
-        //}
+
         if let Some(frequency) = self.map.get(&dt.hour()) {
             return (*frequency + 1) as f64 / (self.count as f64 + 1.0);
         }
@@ -108,25 +98,25 @@ impl TimeCategoryHistogram {
         1.0 / (self.count as f64 + 1.0)
     }
 
-    pub fn build(&mut self, db: &Connection, observe: &String, vlan: i64, proto: &String) {
+    pub fn build(&mut self, db: &Connection, observe: &String, vlan: i64, proto: &String) -> Result<(), duckdb::Error> {
         let sql_command = format!(
             "SELECT {} FROM flow WHERE observe='{}' AND dvlan = {} AND proto='{}';",
             self.name, observe, vlan, proto
         );
-        let mut stmt = db.prepare(&sql_command).expect("build time_category");
+        let mut stmt = db.prepare(&sql_command)?;
 
         let record_iter = stmt
             .query_map([], |row| {
                 Ok(TimeCategoryRecord {
                     value: row.get(0).expect("missing value"),
                 })
-            })
-            .expect("time_category map");
+            })?;
 
         for record in record_iter {
-            let record = record.unwrap();
+            let record = record?;
             self.add(record.value);
         }
+        Ok(())
     }
     pub fn serialize(&self, conn: &mut Connection, observe: &String, vlan: i64, proto: &String) {
         conn.execute_batch(HISTOGRAM_SUMMARY).unwrap();

@@ -7,16 +7,15 @@
  */
 
 use crate::model::table::DistinctObservation;
-use crate::utils::duckdb::{duckdb_open, duckdb_open_memory, duckdb_open_readonly};
-use chrono::{DateTime, TimeZone, Utc};
-use std::time::SystemTime;
-
 use crate::pipeline::parse_interval;
 use crate::pipeline::parse_options;
 use crate::pipeline::FileProcessor;
 use crate::pipeline::FileType;
 use crate::pipeline::Interval;
+use crate::utils::duckdb::{duckdb_open, duckdb_open_memory, duckdb_open_readonly};
+use chrono::{DateTime, TimeZone, Utc};
 use duckdb::Connection;
+use std::time::SystemTime;
 
 use std::fs;
 use std::io::Error;
@@ -147,6 +146,31 @@ impl SampleProcessor {
             .join(",");
         let parquet_list = format!("[{}]", parquet_list);
 
+        // check the number of days in the dataset
+        {
+            println!("{}: checking dataset duration...", self.command);
+            // Use date_diff to calculate the number of days between the first and last timestamps
+            let sql_days_command = format!(
+                "SELECT date_diff('day',first,last) 
+             FROM (SELECT MIN(stime) AS first, MAX(stime) AS last
+             FROM read_parquet({}));",
+                parquet_list
+            );
+            let mut stmt = conn.prepare(&sql_days_command).map_err(|e| {
+                Error::new(
+                    std::io::ErrorKind::Other,
+                    format!("DuckDB prepare error: {}", e),
+                )
+            })?;
+            let days = stmt
+                .query_row([], |row| Ok(row.get::<_, u32>(0).expect("missing version")))
+                .expect("missing days");
+            println!("{}: {} days of data", self.command, days);
+            if days < 1 {
+                println!("{}: not enough data to sample, skipping", self.command);
+                return Ok(());
+            }
+        }
         let sql_distinct_command = format!(
             "SELECT DISTINCT observe, dvlan, proto FROM read_parquet({}) WHERE proto='tcp' OR proto='udp' GROUP BY ALL ORDER BY ALL",
             parquet_list

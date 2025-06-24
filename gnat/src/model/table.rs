@@ -76,7 +76,7 @@ pub struct ParquetHistogramSummaryTable {
     pub q25: f64,
     pub q50: f64,
     pub q75: f64,
-    pub count: i64,
+    pub count: usize,
     pub null_percent: f64,
 }
 
@@ -143,9 +143,9 @@ pub struct HistogramSummaryTable {
     pub proto: String,
     pub name: String,
     pub histogram: String,
-    pub count: u64,
+    pub count: usize,
     pub hash_size: u64,
-    pub bin_count: u64,
+    pub bin_count: usize,
 }
 
 #[derive(Debug)]

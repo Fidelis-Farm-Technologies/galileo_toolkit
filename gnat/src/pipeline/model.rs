@@ -41,7 +41,6 @@ pub struct ModelProcessor {
     pub interval: Interval,
     pub extension: String,
     pub feature_list: Vec<String>,
-    pub quantile: f64,
 }
 
 impl ModelProcessor {
@@ -57,9 +56,8 @@ impl ModelProcessor {
         let interval = parse_interval(interval_string);
         let mut options = parse_options(options_string);
         options
-            .entry("features")
+            .entry("features")           
             .or_insert("daddr,dport,dentropy,sentropy,diat,siat,spd,pcr,orient,stime");
-        options.entry("quantile").or_insert("0.99999");
 
         for (key, value) in &options {
             if !value.is_empty() {
@@ -77,7 +75,6 @@ impl ModelProcessor {
             interval: interval,
             extension: extension_string.to_string(),
             feature_list: feature_list,
-            quantile: 0.99999,
         })
     }
 }
@@ -107,6 +104,8 @@ impl FileProcessor for ModelProcessor {
         false
     }
     fn process(&mut self, file_list: &Vec<String>, _schema_type: FileType) -> Result<(), Error> {
+        // check if the model file exists, if so, the age
+        // is checked to determine if a new model should be built
         if Path::new(&self.model).exists() {
             if self.interval != Interval::ONCE {
                 // check if the current model is a day old, if so build a new one
@@ -133,7 +132,6 @@ impl FileProcessor for ModelProcessor {
                 );
             }
         }
-
         let tmp_output = format!("{}.tmp", self.model);
         let mut db_conn = duckdb_open(&tmp_output, 2);
         let mut parquet_conn = duckdb_open_memory(2);
@@ -146,16 +144,43 @@ impl FileProcessor for ModelProcessor {
             .join(",");
         let parquet_list = format!("[{}]", parquet_list);
 
-        let sql_command = format!(
-            "CREATE TABLE flow AS SELECT * FROM read_parquet({}) WHERE proto='udp' OR (proto='tcp' AND iflags ^@ 'Ss.a');",
-            parquet_list
-        );
-        parquet_conn
-            .execute_batch(&sql_command)
-            .map_err(|e| Error::new(std::io::ErrorKind::Other, format!("DuckDB error: {}", e)))?;
+        // check the number of days in the dataset
+        {
+            println!("{}: checking dataset duration...", self.command);
+            let sql_days_command = format!(
+                "SELECT date_diff('day',first,last) 
+             FROM (SELECT MIN(stime) AS first, MAX(stime) AS last
+             FROM read_parquet({}));",
+                parquet_list
+            );
+            let mut stmt = parquet_conn.prepare(&sql_days_command).map_err(|e| {
+                Error::new(
+                    std::io::ErrorKind::Other,
+                    format!("DuckDB prepare error: {}", e),
+                )
+            })?;
+
+            let days = stmt
+                .query_row([], |row| Ok(row.get::<_, u32>(0).expect("missing version")))
+                .expect("missing days");
+            println!("{}: {} days of data", self.command, days);
+            if days < 2 {
+                println!("{}: not enough data, skipping model build.", self.command);
+            }
+
+            let sql_command = format!(
+            "CREATE TABLE flow AS SELECT * 
+             FROM read_parquet({}) 
+             WHERE proto='udp' OR (proto='tcp' AND iflags ^@ 'Ss.a');",
+            parquet_list);
+            parquet_conn.execute_batch(&sql_command).map_err(|e| {
+                Error::new(std::io::ErrorKind::Other, format!("DuckDB error: {}", e))
+            })?;
+        }
 
         // load observation list
         println!("{}: determining observation points...", self.command);
+
         let mut stmt = parquet_conn
             .prepare(PARQUET_DISTINCT_OBSERVATIONS)
             .map_err(|e| Error::new(std::io::ErrorKind::Other, format!("DuckDB error: {}", e)))?;
@@ -194,12 +219,11 @@ impl FileProcessor for ModelProcessor {
                 string_category: string_cat_map,
                 ipaddr_category: ipadd_cat_map,
                 time_category: time_category_map,
-                quantile: 0.0,
                 low: 0.0,
                 medium: 0.0,
                 high: 0.0,
             };
-            model.build(&parquet_conn, &self.feature_list);
+            let _ = model.build(&parquet_conn, &self.feature_list);
             distinct_models.insert(distinct_key, model);
         }
 
@@ -218,7 +242,7 @@ impl FileProcessor for ModelProcessor {
                 "{}: calculating HBOS summary [{}]",
                 self.command, distinct_key
             );
-            model.summarize(&mut parquet_conn, &mut db_conn, self.quantile);
+            model.summarize(&mut parquet_conn, &mut db_conn);
         }
 
         let _ = db_conn.close();

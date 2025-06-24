@@ -17,7 +17,7 @@ use std::collections::HashMap;
 #[derive(Debug)]
 pub struct StringCategoryHistogram {
     name: String,
-    count: u64,
+    count: usize,
     map: HashMap<String, i64>,
 }
 
@@ -79,34 +79,34 @@ impl StringCategoryHistogram {
         1.0 / (self.count as f64 + 1.0)
     }
 
-    pub fn build(&mut self, db: &Connection, observe: &String, vlan: i64, proto: &String) {
+    pub fn build(&mut self, db: &Connection, observe: &String, vlan: i64, proto: &String) -> Result<(), duckdb::Error> {
         let sql_command = format!(
             "SELECT {} FROM flow WHERE observe='{}' AND dvlan = {} AND proto='{}';",
             self.name, observe, vlan, proto,
         );
-        let mut stmt = db.prepare(&sql_command).expect("build numeric_category");
+        let mut stmt = db.prepare(&sql_command)?;
 
         let record_iter = stmt
             .query_map([], |row| {
                 Ok(StringCategoryRecord {
                     value: row.get(0).expect("missing value"),
                 })
-            })
-            .expect("numeric_category map");
+            })?;
 
         if self.name == "appid" {
             for record in record_iter {
-                let record = record.unwrap();
+                let record = record?;
                 if record.value != "unknown" { // unknown is not a valid category
                     self.add(&record.value);
                 }
             }
         } else {
             for record in record_iter {
-                let record = record.unwrap();
+                let record = record?;
                 self.add(&record.value);
             }
         }
+        Ok(())
     }
     pub fn serialize(&self, conn: &mut Connection, observe: &String, vlan: i64, proto: &String) {
         conn.execute_batch(HISTOGRAM_SUMMARY).unwrap();

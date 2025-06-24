@@ -14,7 +14,7 @@ pub enum HistogramType {
     Nothing(i32),
 }
 
-pub const DEFAULT_FREQUENCY_BIN_SIZE: u64 = 100;
+pub const DEFAULT_FREQUENCY_BIN_SIZE: usize = 100;
 pub const DEFAULT_VLAN_MODULUS: i64 = 1024;
 pub const DEFAULT_NETWORK_MODULUS: u64 = 8192;
 pub const DEFAULT_PORT_MODULUS: i64 = 8192;
@@ -120,7 +120,7 @@ pub static HBOS_SUMMARY: &str = "CREATE TABLE IF NOT EXISTS hbos_summary
     high FLOAT,
 );";
 
-static HBOS_SCORE: &str = "CREATE TABLE IF NOT EXISTS hbos_score
+static HBOS_SCORE: &str = "CREATE OR REPLACE TABLE hbos_score
 (
     score FLOAT
 )";

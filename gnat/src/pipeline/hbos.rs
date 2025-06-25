@@ -154,6 +154,7 @@ impl HbosProcessor {
                         low: row.get(11).expect("quantile value"),
                         medium: row.get(12).expect("quantile value"),
                         high: row.get(13).expect("quantile value"),
+                        severe: row.get(14).expect("quantile value"),
                     })
                 })
                 .expect("query row");
@@ -219,6 +220,7 @@ impl HbosProcessor {
                 low: 0.0,
                 medium: 0.0,
                 high: 0.0,
+                severe: 0.0
             };
 
             let _ = model.deserialize(&mut model_conn);
@@ -271,7 +273,10 @@ impl FileProcessor for HbosProcessor {
         true
     }
     fn process(&mut self, file_list: &Vec<String>, _schema_type: FileType) -> Result<(), Error> {
-        let _ = self.load_if_not_already();
+        if self.load_if_not_already().is_err() {
+            // unable to load model or hbos summary
+            return Ok(());
+        };
 
         // Use iterator and join for file list formatting
         let parquet_list = file_list

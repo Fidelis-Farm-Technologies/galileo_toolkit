@@ -125,7 +125,7 @@ impl IntegerEqualFrequencyBinner {
     }
 
     /// Get the bin counts - the number of elements in each bin
-    pub fn bin_frequency(&self) -> Vec<u64> {
+    pub fn bin_frequency(&self) -> Vec<usize> {
         let boundaries = self.calculate_boundaries();
         let num_bins = boundaries.len() - 1;
         let mut counts = vec![0; num_bins];
@@ -153,7 +153,7 @@ impl IntegerEqualFrequencyBinner {
     }
 
     /// Get a report of the bins and their contents
-    pub fn bin_report(&self) -> Vec<(i64, i64, u64)> {
+    pub fn bin_report(&self) -> Vec<(i64, i64, usize)> {
         let boundaries = self.calculate_boundaries();
         let counts = self.bin_frequency();
 

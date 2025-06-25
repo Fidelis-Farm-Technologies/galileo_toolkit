@@ -52,10 +52,10 @@ pub struct HistogramModels {
     pub string_category: HashMap<String, StringCategoryHistogram>,
     pub ipaddr_category: HashMap<String, IpAddrCategoryHistogram>,
     pub time_category: HashMap<String, TimeCategoryHistogram>,
-
     pub low: f64,
     pub medium: f64,
     pub high: f64,
+    pub severe: f64,
 }
 
 impl HistogramModels {
@@ -180,12 +180,14 @@ impl HistogramModels {
                     low: row.get(11).expect("missing low"),
                     medium: row.get(12).expect("missing med"),
                     high: row.get(13).expect("missing high"),
+                    severe: row.get(14).expect("missing severe"),
                 })
             })
             .expect("HbosSummaryRecord");
         self.low = hbos_summary.low;
         self.medium = hbos_summary.medium;
         self.high = hbos_summary.high;
+        self.severe = hbos_summary.severe;
         Ok(())
     }
 
@@ -479,11 +481,14 @@ impl HistogramModels {
                     hbos_score += (1.0 / feature_prob).log10();
                 }
                 flow_record.hbos_score = hbos_score;
-                flow_record.hbos_severity = if hbos_score >= self.high {
+
+                flow_record.hbos_severity = if hbos_score > self.severe {
+                    Severity::Severe as u8
+                } else if hbos_score > self.high {
                     Severity::High as u8
-                } else if hbos_score >= self.medium {
+                } else if hbos_score > self.medium {
                     Severity::Medium as u8
-                } else if hbos_score >= self.low {
+                } else if hbos_score > self.low {
                     Severity::Low as u8
                 } else {
                     Severity::None as u8
@@ -498,89 +503,59 @@ impl HistogramModels {
         tx.commit()?;
         Ok(count)
     }
-    fn get_optimal_severity_levels(&self, db_conn: &mut Connection) -> (f64, f64, f64) {
+
+    fn get_default_severity_levels(&self, db_conn: &mut Connection) -> (f64, f64, f64, f64) {
         //
         // generate histogram of HBOS scores
         //
-        let mut stmt = db_conn
-            .prepare("SELECT score FROM hbos_score;")
-            .expect("sql prepare");
-        let score_iter = stmt
-            .query_map([], |row| Ok(row.get::<_, f64>(0).expect("missing score")))
-            .expect("expected query map");
-
-        let mut data: Vec<f64> = Vec::new();
-        for result in score_iter {
-            let score = result.expect("expected score");
-            data.push(score);
-        }
-        let opt_bins: F64Binner = OptimalBinner::default();
-        let bin_result = opt_bins.fit(&data).expect("error fitting data to binner");
-        let bin_boundary = opt_bins.get_bin_edges(&bin_result);
-
-        println!("histogram boundaries:");
-        assert!(bin_boundary.len() > 1);
-        for i in 1..bin_boundary.len() {
-            println!(
-                "[{}/{}/{}]\t[({}) {} <= {}]",
-                self.observe,
-                self.vlan,
-                self.proto,
-                i,
-                bin_boundary[i - 1],
-                bin_boundary[i]
-            );
+        {
+            let mut stmt = db_conn
+                .prepare("FROM histogram(hbos_score, score);")
+                .expect("sql prepare");
+            let hist_iter = stmt
+                .query_map([], |row| {
+                    Ok((
+                        row.get::<_, String>(0).expect("missing bin"),   // bin
+                        row.get::<_, f64>(1).expect("missing boundary"), // boundary
+                        row.get::<_, String>(2).expect("missing bar"),   // bar
+                    ))
+                })
+                .expect("expected query map");
+            for result in hist_iter {
+                let (bin, boundary, bar) = result.expect("expected histogram");
+                println!(
+                    "[{}/{}/{}]\t[{} ({})]: {}",
+                    self.observe, self.vlan, self.proto, bin, boundary, bar
+                );
+            }
         }
 
         let mut low = 0.0;
         let mut medium = 0.0;
         let mut high = 0.0;
-        let i = bin_boundary.len();
-        if i > 2 {
-            low = bin_boundary[i - 2];
-            medium = bin_boundary[i - 1];
-            high = bin_boundary[i];
-        }
-
-        return (low, medium, high);
-    }
-    fn get_default_severity_levels(&self, db_conn: &mut Connection) -> (f64, f64, f64) {
-        //
-        // generate histogram of HBOS scores
-        //
-        let mut stmt = db_conn
-            .prepare("FROM histogram(hbos_score, score);")
-            .expect("sql prepare");
-        let hist_iter = stmt
-            .query_map([], |row| {
-                Ok((
-                    row.get::<_, String>(0).expect("missing bin"),   // bin
-                    row.get::<_, f64>(1).expect("missing boundary"), // boundary
-                    row.get::<_, String>(2).expect("missing bar"),   // bar
-                ))
-            })
-            .expect("expected query map");
-
-        let mut low = 0.0;
-        let mut medium = 0.0;
-        let mut high = 0.0;
-        let mut bin_number = 0;
-        for result in hist_iter {
-            let (bin, boundary, bar) = result.expect("expected histogram");
-            println!(
-                "[{}/{}/{}]\t[{} ({})]: {}",
-                self.observe, self.vlan, self.proto, bin, boundary, bar
-            );
-
-            if bin_number > 0 {
-                let (value, b) = bin.split_once(char::is_whitespace).unwrap();
+        let mut severe = 0.0;
+        {
+            let mut stmt = db_conn
+                .prepare("FROM histogram_values(hbos_score, score);")
+                .expect("sql prepare");
+            let hist_iter = stmt
+                .query_map([], |row| {
+                    Ok((
+                        row.get::<_, f64>(0).expect("missing boundary"), // boundary
+                        row.get::<_, usize>(1).expect("missing frequency"), // frequency
+                    ))
+                })
+                .expect("expected query map");
+            for result in hist_iter {
+                let (boundary, frequency) = result.expect("expected histogram");
                 low = medium;
                 medium = high;
-                high = value.parse().unwrap();
+                high = severe;
+                severe = boundary;
             }
-            bin_number += 1;
         }
-        return (low, medium, high);
+
+        return (low, medium, high, severe);
     }
     pub fn summarize(&mut self, parquet_conn: &mut Connection, db_conn: &mut Connection) {
         let mut score_conn = duckdb_open_memory(2);
@@ -713,7 +688,7 @@ impl HistogramModels {
         // generate histogram summary
         //
         {
-            let (low, medium, high) = self.get_optimal_severity_levels(&mut score_conn);
+            let (low, medium, high, severe) = self.get_default_severity_levels(&mut score_conn);
             let mut stmt = score_conn
                 .prepare(
                     "SELECT min(score),max(score),skewness(score),avg(score),stddev_pop(score),
@@ -737,6 +712,7 @@ impl HistogramModels {
                         low: low,
                         medium: medium,
                         high: high,
+                        severe: severe,
                     })
                 })
                 .expect("HbosSummaryRecord");
@@ -781,7 +757,12 @@ impl HistogramModels {
         conn: &Connection,
         feature_list: &Vec<String>,
     ) -> Result<(), duckdb::Error> {
+        //println!("\tfeatures={:?}", feature_list);
         for feature in feature_list {
+            //println!(
+            //    "\tbuilding histogram for feature: [{}/{}/{}/{}]",
+            //    self.observe, self.vlan, self.proto, feature
+            //);
             match feature.as_str() {
                 "stime" => {
                     let mut histogram = TimeCategoryHistogram::new(feature);
@@ -977,7 +958,7 @@ impl HistogramModels {
                     histogram.build(conn, &self.observe, self.vlan, &self.proto)?;
                     self.string_category.insert(feature.to_string(), histogram);
                 }
-                "appid" => {
+                "ndpi_appid" => {
                     let mut histogram = StringCategoryHistogram::new(feature);
                     histogram.build(conn, &self.observe, self.vlan, &self.proto)?;
                     self.string_category.insert(feature.to_string(), histogram);

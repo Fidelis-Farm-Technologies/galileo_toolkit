@@ -185,6 +185,7 @@ impl RuleProcessor {
                 low: 0.0,
                 medium: 0.0,
                 high: 0.0,
+                severe: 0.0
             };
 
             let _ = model.deserialize(&mut model_conn);

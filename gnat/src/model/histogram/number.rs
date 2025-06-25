@@ -6,12 +6,10 @@
  * See license information in LICENSE.
  */
 
-use crate::model::binning::equal_frequency::IntegerEqualFrequencyBinner;
-use crate::model::binning::optimal_binner::IntegerBinner;
-use crate::model::binning::optimal_binner::OptimalBinner;
 use crate::model::histogram::HistogramType;
 use crate::model::histogram::HistogramType::*;
 use crate::model::histogram::*;
+use crate::model::table::HistogramIntegerValue;
 use crate::model::table::MemFlowRecord;
 use crate::model::table::NumberRecord;
 use crate::model::table::{FeatureSummaryRecord, HistogramSummaryTable, NumericHistogramTable};
@@ -31,9 +29,6 @@ pub struct NumberHistogram {
 
 impl NumberHistogram {
     pub fn new(name: &str, bin_count: usize) -> NumberHistogram {
-        if bin_count < 2 {
-            panic!("Number of bins must be at least 2");
-        }
         NumberHistogram {
             name: name.to_string(),
             bin_boundary: Vec::new(),
@@ -85,8 +80,8 @@ impl NumberHistogram {
     }
 
     pub fn probability(&self, value: i64) -> f64 {
-        for i in 0..self.bin_frequency.len() - 1 {
-            if value >= self.bin_boundary[i] && value < self.bin_boundary[i + 1] {
+        for i in 0..self.bin_boundary.len() - 1 {
+            if value <= self.bin_boundary[i] {
                 return (self.bin_frequency[i] + 1) as f64 / (self.count as f64 + 1.0);
             }
         }
@@ -100,31 +95,32 @@ impl NumberHistogram {
         vlan: i64,
         proto: &String,
     ) -> Result<(), duckdb::Error> {
-        let sql_command = format!(
-            "SELECT {} FROM flow WHERE observe='{}' AND dvlan = {} AND proto='{}';",
-            self.name, observe, vlan, proto
+        let sql_create_command = format!(
+            "CREATE OR REPLACE TABLE number AS SELECT {} 
+            FROM flow WHERE observe='{}' AND dvlan = {} AND proto='{}';",
+            self.name, observe, vlan, proto,
         );
+        db.execute_batch(&sql_create_command)?;
+
+        let sql_command = format!("FROM histogram_values(number,{});", self.name);
         let mut stmt = db.prepare(&sql_command)?;
 
-        let record_iter = stmt.query_map([], |row| {
-            Ok(NumberRecord {
-                value: row.get(0).expect("missing value"),
+        let record_iter = stmt
+            .query_map([], |row| {
+                Ok(HistogramIntegerValue {
+                    boundary: row.get(0).expect("missing value"),
+                    frequency: row.get(1).expect("missing value"),
+                })
             })
-        })?;
+            .unwrap();
 
-        let mut data: Vec<i64> = Vec::new();
         for record in record_iter {
             let record = record.expect("error reading record");
-            data.push(record.value);
+            self.bin_boundary.push(record.boundary);
+            self.bin_frequency.push(record.frequency);
+            self.count += record.frequency;
+            self.bin_count += 1;
         }
-        self.count = data.len();
-
-        let opt_bins: IntegerBinner = OptimalBinner::default();
-        let bin_result = opt_bins.fit(&data).expect("error fitting data to binner");
-
-        self.bin_boundary = opt_bins.get_bin_edges(&bin_result);
-        self.bin_frequency = opt_bins.bin_frequency(&bin_result);
-        self.bin_count = self.bin_boundary.len();
 
         Ok(())
     }

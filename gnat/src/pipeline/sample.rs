@@ -6,6 +6,7 @@
  * See license information in LICENSE.
  */
 
+use crate::model::histogram::MINIMUM_DAYS;
 use crate::model::table::DistinctObservation;
 use crate::pipeline::parse_interval;
 use crate::pipeline::parse_options;
@@ -166,7 +167,7 @@ impl SampleProcessor {
                 .query_row([], |row| Ok(row.get::<_, u32>(0).expect("missing version")))
                 .expect("missing days");
             println!("{}: {} days of data", self.command, days);
-            if days < 1 {
+            if days < MINIMUM_DAYS {
                 println!("{}: not enough data to sample, skipping", self.command);
                 return Ok(());
             }

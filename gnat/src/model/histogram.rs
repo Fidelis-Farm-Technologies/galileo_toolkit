@@ -22,6 +22,7 @@ pub const DEFAULT_ENTROPY_MODULUS: i64 = 256;
 pub const DEFAULT_PCR_MODULUS: i64 = 256;
 pub const DEFAULT_ASN_MODULUS: i64 = 8192;
 pub const NO_MODULUS: i64 = 0;
+pub const MINIMUM_DAYS: u32 = 2;
 
 pub static MODEL_SUMMARY: &str = "CREATE TABLE IF NOT EXISTS model_summary
 (
@@ -118,6 +119,7 @@ pub static HBOS_SUMMARY: &str = "CREATE TABLE IF NOT EXISTS hbos_summary
     low FLOAT,
     medium FLOAT,
     high FLOAT,
+    severe FLOAT
 );";
 
 static HBOS_SCORE: &str = "CREATE OR REPLACE TABLE hbos_score

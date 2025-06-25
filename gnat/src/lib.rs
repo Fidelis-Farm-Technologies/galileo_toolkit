@@ -125,6 +125,7 @@ pub mod pipeline {
         MINUTE,
         HOUR,
         DAY,
+        WEEK,
     }
 
     #[derive(Debug, Clone, PartialEq)]
@@ -154,6 +155,7 @@ pub mod pipeline {
             "minute" => Interval::MINUTE,
             "hour" => Interval::HOUR,
             "day" => Interval::DAY,
+            "week" => Interval::WEEK,
             _ => Interval::SECOND,
         }
     }
@@ -195,6 +197,12 @@ pub mod pipeline {
                 }
                 Interval::DAY => {
                     if now.day() != last.day() {
+                        return true;
+                    }
+                }
+                Interval::WEEK => {
+                    let delta = now - last;
+                    if delta.num_days() >= 7 {
                         return true;
                     }
                 }
@@ -350,7 +358,7 @@ pub mod pipeline {
                         }
                     }
                     println!("{}: elapsed time: {:?}", command, start.elapsed());
-                    
+
                     //
                     // move files to pass or delete
                     //

@@ -12,6 +12,7 @@ use crate::model::histogram::number::NumberHistogram;
 use crate::model::histogram::numeric_category::NumericCategoryHistogram;
 use crate::model::histogram::string_category::StringCategoryHistogram;
 use crate::model::histogram::time_category::TimeCategoryHistogram;
+use crate::model::histogram::MINIMUM_DAYS;
 
 use crate::model::histogram::PARQUET_DISTINCT_OBSERVATIONS;
 use crate::model::table::DistinctObservation;
@@ -56,7 +57,7 @@ impl ModelProcessor {
         let interval = parse_interval(interval_string);
         let mut options = parse_options(options_string);
         options
-            .entry("features")           
+            .entry("features")
             .or_insert("daddr,dport,dentropy,sentropy,diat,siat,spd,pcr,orient,stime");
 
         for (key, value) in &options {
@@ -164,15 +165,16 @@ impl FileProcessor for ModelProcessor {
                 .query_row([], |row| Ok(row.get::<_, u32>(0).expect("missing version")))
                 .expect("missing days");
             println!("{}: {} days of data", self.command, days);
-            if days < 2 {
+            if days < MINIMUM_DAYS {
                 println!("{}: not enough data, skipping model build.", self.command);
             }
 
             let sql_command = format!(
-            "CREATE TABLE flow AS SELECT * 
+                "CREATE TABLE flow AS SELECT * 
              FROM read_parquet({}) 
              WHERE proto='udp' OR (proto='tcp' AND iflags ^@ 'Ss.a');",
-            parquet_list);
+                parquet_list
+            );
             parquet_conn.execute_batch(&sql_command).map_err(|e| {
                 Error::new(std::io::ErrorKind::Other, format!("DuckDB error: {}", e))
             })?;
@@ -222,6 +224,7 @@ impl FileProcessor for ModelProcessor {
                 low: 0.0,
                 medium: 0.0,
                 high: 0.0,
+                severe: 0.0
             };
             let _ = model.build(&parquet_conn, &self.feature_list);
             distinct_models.insert(distinct_key, model);

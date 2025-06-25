@@ -62,6 +62,7 @@ pub struct HbosSummaryRecord {
     pub low: f64,
     pub medium: f64,
     pub high: f64,
+    pub severe: f64,
 }
 
 #[derive(Debug)]
@@ -78,6 +79,18 @@ pub struct ParquetHistogramSummaryTable {
     pub q75: f64,
     pub count: usize,
     pub null_percent: f64,
+}
+
+#[derive(Debug)]
+pub struct HistogramDoubleValue {
+    pub boundary: f64,
+    pub frequency: usize,
+}
+
+#[derive(Debug)]
+pub struct HistogramIntegerValue {
+    pub boundary: i64,
+    pub frequency: usize,
 }
 
 #[derive(Debug)]

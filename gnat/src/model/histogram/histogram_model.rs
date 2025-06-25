@@ -745,7 +745,8 @@ impl HistogramModels {
                     hbos_summary.quantile,
                     hbos_summary.low,
                     hbos_summary.medium,
-                    hbos_summary.high
+                    hbos_summary.high,
+                    hbos_summary.severe
                 ])
                 .expect("hbos_summary");
             let _ = appender.flush();

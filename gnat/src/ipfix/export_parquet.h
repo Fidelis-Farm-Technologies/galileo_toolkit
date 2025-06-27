@@ -30,7 +30,7 @@
 
 #define FLOW_SCHEMA                                                                             \
     "CREATE TABLE flow ("                                                                       \
-    "version UINTEGER,id UUID,"                                                                 \
+    "stream UINTEGER,id UUID,"                                                                  \
     "observe VARCHAR,stime TIMESTAMP,etime TIMESTAMP,dur UINTEGER,rtt UINTEGER,pcr INTEGER,"    \
     "proto VARCHAR,saddr VARCHAR,daddr VARCHAR,sport USMALLINT,dport USMALLINT,"                \
     "iflags VARCHAR,uflags VARCHAR,stcpseq UINTEGER,dtcpseq UINTEGER,"                          \
@@ -46,7 +46,7 @@
     "spd VARCHAR,reason VARCHAR,smac VARCHAR,dmac VARCHAR,"                                     \
     "scountry VARCHAR,dcountry VARCHAR,sasn UINTEGER,dasn UINTEGER,"                            \
     "sasnorg VARCHAR,dasnorg VARCHAR,orient VARCHAR,tag VARCHAR[],"                             \
-    "hbos_score DOUBLE,hbos_severity UTINYINT,hbos_map MAP(VARCHAR, FLOAT),"                     \
+    "hbos_score DOUBLE,hbos_severity UTINYINT,hbos_map MAP(VARCHAR, FLOAT),"                    \
     "ndpi_appid VARCHAR,ndpi_category VARCHAR,ndpi_risk_bits UBIGINT,ndpi_risk_score UINTEGER," \
     "ndpi_risk_severity UTINYINT, ndpi_risk_list VARCHAR[],trigger TINYINT);"
 

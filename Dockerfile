@@ -57,6 +57,7 @@ COPY --from=builder /builder/gnat_scripts/entrypoint-gnat_tag.sh /opt/gnat/scrip
 COPY --from=builder /builder/gnat_scripts/entrypoint-gnat_sample.sh /opt/gnat/scripts/
 COPY --from=builder /builder/gnat_scripts/entrypoint-gnat_aggregate.sh /opt/gnat/scripts/
 COPY --from=builder /builder/gnat_scripts/entrypoint-gnat_rule.sh /opt/gnat/scripts/
+COPY --from=builder /builder/gnat_scripts/entrypoint-gnat_stream.sh /opt/gnat/scripts/
 COPY --from=builder /builder/gnat_scripts/entrypoint-gnat_store.sh /opt/gnat/scripts/
 
 COPY --from=builder /builder/gnat_etc/protocols /etc
@@ -74,6 +75,7 @@ COPY --from=builder /builder/gnat/target/release/gnat_hbos /opt/gnat/bin/gnat_hb
 COPY --from=builder /builder/gnat/target/release/gnat_model /opt/gnat/bin/gnat_model
 COPY --from=builder /builder/gnat/target/release/gnat_tag /opt/gnat/bin/gnat_tag
 COPY --from=builder /builder/gnat/target/release/gnat_rule /opt/gnat/bin/gnat_rule
+COPY --from=builder /builder/gnat/target/release/gnat_stream /opt/gnat/bin/gnat_stream
 COPY --from=builder /builder/gnat/target/release/gnat_store /opt/gnat/bin/gnat_store
 
 COPY --from=builder /opt/gnat/bin/yaf /opt/gnat/bin/gnat_sensor

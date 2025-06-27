@@ -13,6 +13,9 @@ use crate::model::histogram::numeric_category::NumericCategoryHistogram;
 use crate::model::histogram::string_category::StringCategoryHistogram;
 use crate::model::histogram::time_category::TimeCategoryHistogram;
 use crate::model::histogram::MINIMUM_DAYS;
+use crate::pipeline::load_environment;
+use crate::pipeline::use_motherduck;
+use crate::pipeline::StreamType;
 
 use crate::model::histogram::PARQUET_DISTINCT_OBSERVATIONS;
 use crate::model::table::DistinctObservation;
@@ -42,6 +45,7 @@ pub struct ModelProcessor {
     pub interval: Interval,
     pub extension: String,
     pub feature_list: Vec<String>,
+    pub md_database: String,
 }
 
 impl ModelProcessor {
@@ -54,15 +58,27 @@ impl ModelProcessor {
         extension_string: &str,
         options_string: &str,
     ) -> Result<Self, Error> {
+        let _ = load_environment();
         let interval = parse_interval(interval_string);
         let mut options = parse_options(options_string);
         options
             .entry("features")
             .or_insert("daddr,dport,dentropy,sentropy,diat,siat,spd,pcr,orient,stime");
+        options.entry("md").or_insert("");
 
         for (key, value) in &options {
             if !value.is_empty() {
                 println!("{}: [{}={}]", command, key, value);
+            }
+        }
+
+        let mut md_database = options.get("md").expect("expected model").to_string();
+        if !md_database.is_empty() {
+            let md_parameter = format!("md:{}", md_database);
+            if use_motherduck(&md_parameter).expect("motherduck env") {
+                println!("{}: [motherduck={}]", command, md_database);
+            } else {
+                md_database.clear();
             }
         }
         let features = options.get("features").expect("expected feature");
@@ -76,7 +92,32 @@ impl ModelProcessor {
             interval: interval,
             extension: extension_string.to_string(),
             feature_list: feature_list,
+            md_database: md_database.to_string(),
         })
+    }
+    fn upload_model(&self) -> Result<(), Error> {
+        if !self.md_database.is_empty() {
+            let mut md_conn = duckdb_open("md:", 2);
+
+            // upload the model to motherduck
+            let sql_command = format!(
+                "CREATE OR REPLACE DATABASE {} FROM '{}';",
+                self.md_database, self.model,
+            );
+
+            md_conn.execute_batch(&sql_command).map_err(|e| {
+                Error::new(
+                    std::io::ErrorKind::Other,
+                    format!("DuckDB error during model upload: {}", e),
+                )
+            })?;
+            let _ = md_conn.close();
+            println!(
+                "{}: uploaded model {} to motherduck",
+                self.command, self.md_database
+            );
+        }
+        Ok(())
     }
 }
 impl FileProcessor for ModelProcessor {
@@ -95,6 +136,9 @@ impl FileProcessor for ModelProcessor {
     fn get_interval(&self) -> &Interval {
         &self.interval
     }
+    fn get_stream_id(&self) -> u32 {
+        StreamType::IPFIX as u32
+    }
     fn get_file_extension(&self) -> &String {
         &self.extension
     }
@@ -104,7 +148,7 @@ impl FileProcessor for ModelProcessor {
     fn delete_files(&self) -> bool {
         false
     }
-    fn process(&mut self, file_list: &Vec<String>, _schema_type: FileType) -> Result<(), Error> {
+    fn process(&mut self, file_list: &Vec<String>) -> Result<(), Error> {
         // check if the model file exists, if so, the age
         // is checked to determine if a new model should be built
         if Path::new(&self.model).exists() {
@@ -170,9 +214,7 @@ impl FileProcessor for ModelProcessor {
             }
 
             let sql_command = format!(
-                "CREATE TABLE flow AS SELECT * 
-             FROM read_parquet({}) 
-             WHERE proto='udp' OR (proto='tcp' AND iflags ^@ 'Ss.a');",
+                "CREATE TABLE flow AS SELECT * FROM read_parquet({});",
                 parquet_list
             );
             parquet_conn.execute_batch(&sql_command).map_err(|e| {
@@ -224,7 +266,7 @@ impl FileProcessor for ModelProcessor {
                 low: 0.0,
                 medium: 0.0,
                 high: 0.0,
-                severe: 0.0
+                severe: 0.0,
             };
             let _ = model.build(&parquet_conn, &self.feature_list);
             distinct_models.insert(distinct_key, model);
@@ -236,7 +278,7 @@ impl FileProcessor for ModelProcessor {
                 "{}: serializing HBOS model [{}]",
                 self.command, distinct_key
             );
-            model.serialize(&mut db_conn);
+            let _ = model.serialize(&mut db_conn);
         }
 
         // summarize hbos
@@ -245,7 +287,7 @@ impl FileProcessor for ModelProcessor {
                 "{}: calculating HBOS summary [{}]",
                 self.command, distinct_key
             );
-            model.summarize(&mut parquet_conn, &mut db_conn);
+            let _ = model.summarize(&mut parquet_conn, &mut db_conn);
         }
 
         let _ = db_conn.close();
@@ -269,6 +311,10 @@ impl FileProcessor for ModelProcessor {
                 format!("failed to rename model: {}", e),
             )
         })?;
+
+        // upload the model to motherduck if configured
+        self.upload_model()?;
+
         Ok(())
     }
 }

@@ -15,6 +15,8 @@ use crate::model::histogram::time_category::TimeCategoryHistogram;
 use crate::model::histogram::{MODEL_DISTINCT_OBSERVATIONS, PARQUET_DISTINCT_OBSERVATIONS};
 use crate::model::table::DistinctObservation;
 use crate::model::table::HbosSummaryRecord;
+use crate::pipeline::load_environment;
+use crate::pipeline::StreamType;
 use crate::utils::duckdb::{duckdb_open, duckdb_open_memory, duckdb_open_readonly};
 use chrono::{DateTime, TimeZone, Utc};
 use duckdb::params;
@@ -57,6 +59,7 @@ impl HbosProcessor {
         extension_string: &str,
         options_string: &str,
     ) -> Result<Self, Error> {
+        let _ = load_environment();
         let interval = parse_interval(interval_string);
         let mut options = parse_options(options_string);
 
@@ -220,7 +223,7 @@ impl HbosProcessor {
                 low: 0.0,
                 medium: 0.0,
                 high: 0.0,
-                severe: 0.0
+                severe: 0.0,
             };
 
             let _ = model.deserialize(&mut model_conn);
@@ -263,6 +266,9 @@ impl FileProcessor for HbosProcessor {
     fn get_interval(&self) -> &Interval {
         &self.interval
     }
+    fn get_stream_id(&self) -> u32 {
+        StreamType::IPFIX as u32
+    }
     fn get_file_extension(&self) -> &String {
         &self.extension
     }
@@ -272,7 +278,7 @@ impl FileProcessor for HbosProcessor {
     fn delete_files(&self) -> bool {
         true
     }
-    fn process(&mut self, file_list: &Vec<String>, _schema_type: FileType) -> Result<(), Error> {
+    fn process(&mut self, file_list: &Vec<String>) -> Result<(), Error> {
         if self.load_if_not_already().is_err() {
             // unable to load model or hbos summary
             return Ok(());
@@ -341,6 +347,7 @@ impl FileProcessor for HbosProcessor {
                 };
                 let _ = histogram_model.score(&mut db_in, &mut db_out);
             }
+            let _ = db_in.close();
         }
 
         println!("{}: transforming data...", self.command);

@@ -1,5 +1,6 @@
-use crate::model::table::TableTrait;
 use crate::model::table::MetricRecord;
+use crate::model::table::TableTrait;
+use crate::pipeline::StreamType;
 use chrono::{TimeZone, Utc};
 use duckdb::{params, Appender};
 
@@ -37,6 +38,7 @@ impl TableTrait for VpnTable {
                 let vpn: String = row.get(2).expect("missing vpn");
                 let key = format!("{}({})", daddr, vpn);
                 Ok(MetricRecord {
+                    stream: StreamType::TELEMETRY as u32,
                     bucket: row.get(0).expect("missing bucket"),
                     observe: row.get(1).expect("missing observ"),
                     name: "vpn".to_string(),
@@ -54,6 +56,7 @@ impl TableTrait for VpnTable {
                 .timestamp_opt((record.bucket / 1_000_000) as i64, 0)
                 .unwrap();
             sink.append_row(params![
+                record.stream,
                 ts.to_rfc3339(),
                 record.observe,
                 record.name,

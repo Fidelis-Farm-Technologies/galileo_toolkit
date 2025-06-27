@@ -8,6 +8,7 @@
 
 extern crate exitcode;
 
+use crate::pipeline::StreamType;
 use crate::utils::duckdb::{duckdb_open, duckdb_open_memory, duckdb_open_readonly};
 use duckdb::Connection;
 use serde::{Deserialize, Serialize};
@@ -16,6 +17,7 @@ use std::fs;
 use chrono::{DateTime, TimeZone, Utc};
 use std::time::SystemTime;
 
+use crate::pipeline::load_environment;
 use crate::pipeline::parse_interval;
 use crate::pipeline::parse_options;
 use crate::pipeline::FileProcessor;
@@ -23,7 +25,7 @@ use crate::pipeline::FileType;
 use crate::pipeline::Interval;
 use std::io::Error;
 
-pub const TAG_LIMIT: u8 = 8;
+pub const TAG_LIMIT: u8 = 16;
 
 #[derive(Clone, Serialize, Deserialize)]
 pub struct TagStructure {
@@ -70,6 +72,7 @@ impl TagProcessor {
         extension_string: &str,
         options_string: &str,
     ) -> Result<Self, Error> {
+        let _ = load_environment();
         let interval = parse_interval(interval_string);
         let options = parse_options(options_string);
         for (key, value) in &options {
@@ -190,6 +193,9 @@ impl FileProcessor for TagProcessor {
     fn get_interval(&self) -> &Interval {
         &self.interval
     }
+    fn get_stream_id(&self) -> u32 {
+        StreamType::IPFIX as u32
+    }
     fn get_file_extension(&self) -> &String {
         &self.extension
     }
@@ -199,7 +205,7 @@ impl FileProcessor for TagProcessor {
     fn delete_files(&self) -> bool {
         true
     }
-    fn process(&mut self, file_list: &Vec<String>, _schema_type: FileType) -> Result<(), Error> {
+    fn process(&mut self, file_list: &Vec<String>) -> Result<(), Error> {
         let parquet_list = file_list
             .iter()
             .map(|file| format!("'{}'", file))

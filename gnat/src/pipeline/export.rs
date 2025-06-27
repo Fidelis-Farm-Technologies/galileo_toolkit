@@ -11,11 +11,13 @@ use crate::utils::duckdb::{duckdb_open, duckdb_open_memory, duckdb_open_readonly
 use chrono::{DateTime, TimeZone, Utc};
 use std::time::SystemTime;
 
+use crate::pipeline::load_environment;
 use crate::pipeline::parse_interval;
 use crate::pipeline::parse_options;
 use crate::pipeline::FileProcessor;
 use crate::pipeline::FileType;
 use crate::pipeline::Interval;
+use crate::pipeline::StreamType;
 use duckdb::Connection;
 use std::io::Error;
 
@@ -40,6 +42,7 @@ impl ExportProcessor {
         extension_string: &str,
         options_string: &str,
     ) -> Result<Self, Error> {
+        let _ = load_environment();
         let interval = parse_interval(interval_string);
         let mut options = parse_options(options_string);
         options.entry("format").or_insert("json");
@@ -97,6 +100,9 @@ impl FileProcessor for ExportProcessor {
     fn get_interval(&self) -> &Interval {
         &self.interval
     }
+    fn get_stream_id(&self) -> u32 {
+        StreamType::ADHOC as u32
+    }
     fn get_file_extension(&self) -> &String {
         &self.extension
     }
@@ -107,7 +113,7 @@ impl FileProcessor for ExportProcessor {
     fn delete_files(&self) -> bool {
         true
     }
-    fn process(&mut self, file_list: &Vec<String>, _schema_type: FileType) -> Result<(), Error> {
+    fn process(&mut self, file_list: &Vec<String>) -> Result<(), Error> {
         let conn = duckdb_open_memory(2);
 
         let mut parquet_list = String::from("[");
@@ -145,6 +151,7 @@ impl FileProcessor for ExportProcessor {
         }
 
         conn.execute_batch(&sql_command).expect("execute_batch");
+        conn.close().expect("db close");
         println!("exported: {} => {}", parquet_list, output_file);
 
         Ok(())

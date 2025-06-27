@@ -9,13 +9,14 @@
 use std::io::Error;
 
 use crate::ipfix::libfixbuf::unsafe_ifpix_socket_import;
+use crate::pipeline::load_environment;
 use crate::pipeline::parse_interval;
 use crate::pipeline::parse_options;
 use crate::pipeline::FileProcessor;
 use crate::pipeline::FileType;
 use crate::pipeline::Interval;
+use crate::pipeline::StreamType;
 use duckdb::Connection;
-
 pub struct CollectorProcessor {
     pub command: String,
     pub host: String,
@@ -46,6 +47,7 @@ impl CollectorProcessor {
         extension_string: &str,
         options_string: &str,
     ) -> Result<Self, Error> {
+        let _ = load_environment();
         let interval = parse_interval(interval_string);
         let mut options = parse_options(options_string);
 
@@ -127,6 +129,9 @@ impl FileProcessor for CollectorProcessor {
     fn get_interval(&self) -> &Interval {
         &self.interval
     }
+    fn get_stream_id(&self) -> u32 {
+        StreamType::IPFIX as u32
+    }
     fn get_file_extension(&self) -> &String {
         &self.extension
     }
@@ -159,11 +164,7 @@ impl FileProcessor for CollectorProcessor {
     fn delete_files(&self) -> bool {
         true
     }
-    fn process(
-        &mut self,
-        _file_list: &Vec<String>,
-        _schema_version: FileType,
-    ) -> Result<(), Error> {
+    fn process(&mut self, _file_list: &Vec<String>) -> Result<(), Error> {
         Err(Error::new(
             std::io::ErrorKind::Other,
             "CollectorProcessor::process is not implemented",

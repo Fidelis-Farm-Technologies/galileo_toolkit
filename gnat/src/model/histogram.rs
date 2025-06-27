@@ -128,7 +128,7 @@ static HBOS_SCORE: &str = "CREATE OR REPLACE TABLE hbos_score
 )";
 
 pub static MD_FLOW_TABLE: &str = "CREATE TABLE IF NOT EXISTS flow (
-    version UINTEGER,
+    stream UINTEGER,
     id UUID,
     observe VARCHAR,
     stime TIMESTAMP,

@@ -7,8 +7,10 @@
  */
 
 use crate::model::histogram::MD_FLOW_TABLE;
+use crate::pipeline::load_environment;
 use crate::pipeline::use_motherduck;
 use crate::pipeline::StorageType;
+use crate::pipeline::StreamType;
 use crate::utils::duckdb::{duckdb_open, duckdb_open_memory, duckdb_open_readonly};
 use dotenv::dotenv;
 use duckdb::Connection;
@@ -58,6 +60,7 @@ impl StoreProcessor {
         extension_string: &str,
         options_string: &str,
     ) -> Result<Self, Error> {
+        let _ = load_environment();
         let interval = parse_interval(interval_string);
         let mut options = parse_options(options_string);
         let storage_type = Self::get_storage_type(output)?;
@@ -69,11 +72,16 @@ impl StoreProcessor {
         }
 
         let mut db_conn = duckdb_open_memory(2);
-
         if storage_type == StorageType::MOTHERDUCK {
-            db_conn = duckdb_open(output, 2);
-            db_conn.execute_batch(MD_FLOW_TABLE).expect("execute_batch");
-            println!("{}: connection established with {}", command, output);
+            if use_motherduck(output).expect("motherduck env") {
+                db_conn = duckdb_open(output, 2);
+                let _ = db_conn.execute_batch(MD_FLOW_TABLE).map_err(|e| {
+                    Error::new(std::io::ErrorKind::Other, format!("DuckDB error: {}", e))
+                })?;
+                println!("{}: connection established with {}", command, output);
+            } else {
+                return Err(Error::other("motherduck is not enabled"));
+            }
         } else if storage_type == StorageType::S3 {
             let s3_region = env::var("s3_region").expect("missing S3 region");
             let s3_endpoint = env::var("s3_endpoint").expect("missing S3 endpoint");
@@ -116,13 +124,11 @@ impl StoreProcessor {
 
     pub fn get_storage_type(output: &str) -> Result<StorageType, Error> {
         if output.starts_with("md:") {
-            dotenv().ok();
             let motherduck_token = env::var("motherduck_token");
             if motherduck_token.is_ok() {
                 return Ok(StorageType::MOTHERDUCK);
             }
         } else if output.starts_with("s3://") {
-            dotenv().ok();
             let s3_bucket = env::var("s3_bucket");
             if !s3_bucket.is_ok() {
                 return Err(Error::other("missing S3 bucket name"));
@@ -156,18 +162,17 @@ impl StoreProcessor {
     }
     fn upload_to_motherduck(&mut self, file_list: &Vec<String>) -> Result<(), Error> {
         println!("{}: uploading to motherduck...", self.command);
-
         for parquet_file in file_list.clone().into_iter() {
             let sql_export = format!(
                 "INSERT INTO flow SELECT * FROM read_parquet('{}')",
                 parquet_file
             );
-            self.db_conn
-                .execute_batch(&sql_export)
-                .expect("execute_batch()");
-            println!("{}:\t{}", self.command, parquet_file);
+            let _ = self.db_conn.execute_batch(&sql_export).map_err(|e| {
+                Error::new(std::io::ErrorKind::Other, format!("DuckDB error: {}", e))
+            })?;
+            //println!("{}:\t{}", self.command, parquet_file);
         }
-
+        println!("{}: done.", self.command);
         Ok(())
     }
     fn upload_to_s3(&mut self, file_list: &Vec<String>) -> Result<(), Error> {
@@ -238,7 +243,7 @@ impl StoreProcessor {
                 .execute_batch(&sql_s3_copy)
                 .expect("S3 execute upload");
         }
-
+        println!("{}: done.", self.command);
         Ok(())
     }
     fn local_storage(&mut self, file_list: &Vec<String>) -> Result<(), Error> {
@@ -286,6 +291,9 @@ impl FileProcessor for StoreProcessor {
     fn get_interval(&self) -> &Interval {
         &self.interval
     }
+    fn get_stream_id(&self) -> u32 {
+        StreamType::IPFIX as u32
+    }
     fn get_file_extension(&self) -> &String {
         &self.extension
     }
@@ -296,7 +304,7 @@ impl FileProcessor for StoreProcessor {
         true
     }
 
-    fn process(&mut self, file_list: &Vec<String>, schema_version: FileType) -> Result<(), Error> {
+    fn process(&mut self, file_list: &Vec<String>) -> Result<(), Error> {
         match self.storage_type {
             StorageType::MOTHERDUCK => {
                 self.upload_to_motherduck(file_list)?;

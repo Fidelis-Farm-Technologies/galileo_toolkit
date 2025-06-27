@@ -48,10 +48,11 @@ pub mod pipeline {
     pub mod rule;
     pub mod sample;
     pub mod store;
+    pub mod stream;
     pub mod tag;
 
     static FIELDS: &'static [&'static str] = &[
-        "version",
+        "stream",
         "id",
         "observe",
         "stime",
@@ -117,6 +118,14 @@ pub mod pipeline {
         "ndpi_risk_list",
         "trigger",
     ];
+
+    #[derive(Debug, Clone, PartialEq)]
+    pub enum StreamType {
+        LEGACY = 3,
+        IPFIX = 100,
+        TELEMETRY = 200,
+        ADHOC = 999,
+    }
 
     #[derive(Debug, Clone, PartialEq)]
     pub enum Interval {
@@ -212,34 +221,78 @@ pub mod pipeline {
             }
         }
     }
-    fn get_file_type(file: &String) -> Result<FileType, Error> {
+
+    fn check_current_schema(file: &String) -> Result<bool, Error> {
         if file.ends_with(".yaf") {
-            return Ok(FileType::IPFIX_YAF);
+            return Ok(true);
+        }
+        let db_conn = duckdb_open_memory(1);
+
+        let sql_exists_command = format!(
+            "SELECT EXISTS(SELECT 1 FROM parquet_schema('{}') WHERE name = 'stream')",
+            file
+        );
+        let mut stmt = db_conn.prepare(&sql_exists_command).expect("sql prepare");
+        let exists = stmt
+            .query_row([], |row| Ok(row.get::<_, bool>(0).expect("missing stream")))
+            .expect("missing stream");
+
+        Ok(exists)
+    }
+
+    fn update_legacy_schema(file: &String) -> Result<(), Error> {
+        if file.ends_with(".yaf") {
+            return Ok(());
+        }
+        let db_conn = duckdb_open_memory(1);
+
+        let sql_exists_command = format!(
+            "SELECT EXISTS(SELECT 1 FROM parquet_schema('{}') WHERE name = 'stream')",
+            file
+        );
+        let mut stmt = db_conn.prepare(&sql_exists_command).expect("sql prepare");
+        let exists = stmt
+            .query_row([], |row| Ok(row.get::<_, bool>(0).expect("missing stream")))
+            .expect("missing stream");
+        if !exists {
+            let tmp_file = format!(".{}", file);
+            let sql_get_stream = format!(
+                "CREATE OR REPLACE TABLE flow AS SELECT * FROM '{}';
+                ALTER TABLE flow RENAME version TO stream;
+                UPDATE flow SET stream = 100;
+                COPY flow TO '{}' (FORMAT parquet);",
+                file, tmp_file
+            );
+            fs::remove_file(file).expect("failed to remove old file");
+            fs::rename(tmp_file.as_str(), file.as_str()).expect("failed to rename new file");
+        }
+        Ok(())
+    }
+
+    fn get_stream_type(file: &String) -> Result<u32, Error> {
+        if file.ends_with(".yaf") {
+            return Ok(StreamType::IPFIX as u32);
         } else if file.ends_with(".parquet") {
             let db_conn = duckdb_open_memory(1);
-            let sql_get_version = format!(
-                "SELECT DISTINCT version FROM read_parquet('{}') LIMIT 1;",
+            let sql_get_stream = format!(
+                "SELECT DISTINCT stream FROM read_parquet('{}') LIMIT 1;",
                 file
             );
-            let mut stmt = db_conn.prepare(&sql_get_version).expect("sql prepare");
-            let version = stmt
-                .query_row([], |row| Ok(row.get::<_, u32>(0).expect("missing version")))
+            let mut stmt = db_conn.prepare(&sql_get_stream).expect("sql prepare");
+            let stream = stmt
+                .query_row([], |row| Ok(row.get::<_, u32>(0).expect("missing stream")))
                 .expect("query row");
-            match version {
-                0 => Ok(FileType::UNSUPPORTED),
-                1 => Ok(FileType::UNSUPPORTED),
-                2 => Ok(FileType::UNSUPPORTED),
-                3 => Ok(FileType::PARQUET_FLOW3),
-                4 => Ok(FileType::PARQUET_FLOW4),
-                _ => Ok(FileType::UNKNOWN),
-            }
+            return Ok(stream);
         } else {
             return Err(Error::other("unsupported file type"));
         }
     }
+    pub fn load_environment() -> Result<(), VarError> {
+        dotenv().ok();
+        Ok(())
+    }
     pub fn use_motherduck(output: &str) -> Result<bool, VarError> {
         if output.starts_with("md:") {
-            dotenv().ok();
             let motherduck_token = env::var("motherduck_token");
             if motherduck_token.is_ok() {
                 return Ok(true);
@@ -249,11 +302,12 @@ pub mod pipeline {
     }
 
     pub trait FileProcessor {
-        fn process(&mut self, file_list: &Vec<String>, schema_type: FileType) -> Result<(), Error>;
+        fn process(&mut self, file_list: &Vec<String>) -> Result<(), Error>;
         fn socket(&mut self) -> Result<(), Error>;
         fn get_command(&self) -> &String;
         fn get_input(&self) -> &String;
         fn get_output(&self) -> &String;
+        fn get_stream_id(&self) -> u32;
         fn get_pass(&self) -> &String;
         fn get_file_extension(&self) -> &String;
         fn get_interval(&self) -> &Interval;
@@ -264,6 +318,7 @@ pub mod pipeline {
         }
 
         fn run(&mut self) -> Result<(), Error> {
+
             let command = self.get_command().clone();
             let input = self.get_input();
             let output = self.get_output();
@@ -326,31 +381,40 @@ pub mod pipeline {
                 }
 
                 if !file_list.is_empty() {
-                    // first file represents the schema version for the batch
-                    let schema_type = get_file_type(&file_list[0]).expect("get schema version");
-
-                    if schema_type == FileType::IPFIX_YAF {
-                        println!(
-                            "{}: processing {} ipfix file(s) ...",
-                            command,
-                            file_list.len()
-                        );
-                    } else if schema_type == FileType::PARQUET_FLOW3 {
-                        println!(
-                            "{}: processing {} parquet file(s) (schema version {:?})...",
-                            command,
-                            file_list.len(),
-                            schema_type
-                        );
+                    let start = Instant::now();
+                    //
+                    // make sure stream types are compatible
+                    //
+                    let is_current_schema = check_current_schema(&file_list[0])
+                        .expect("failed to check current schema");
+                    if !is_current_schema {
+                        for file in &file_list {
+                            // expense; but necessary
+                            println!("{}: updating legacy schema for file: {}", command, file);
+                            update_legacy_schema(file).expect("failed to update legacy schema");
+                        }
+                        println!("{}: processing {} file(s) ...", command, file_list.len());
                     } else {
-                        eprintln!("{}: unsupported schema version {:?}.", command, schema_type);
-                        std::process::exit(exitcode::CONFIG)
+                        let stream_id = self.get_stream_id();
+                        let stream_type =
+                            get_stream_type(&file_list[0]).expect("get schema version");
+
+                        if stream_id == StreamType::ADHOC as u32
+                            || stream_type == self.get_stream_id()
+                        {
+                            println!("{}: processing {} file(s) ...", command, file_list.len());
+                        } else {
+                            eprintln!(
+                                "{}: stream type mismatch: expected {}, got {}",
+                                command, stream_id, stream_type
+                            );
+                            std::process::exit(exitcode::CONFIG);
+                        }
                     }
                     //
                     // process files
                     //
-                    let start = Instant::now();
-                    match self.process(&file_list, schema_type) {
+                    match self.process(&file_list) {
                         Ok(_) => {}
                         Err(error) => {
                             eprintln!("{}: processing failed: {}", command, error);

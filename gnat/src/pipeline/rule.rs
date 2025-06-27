@@ -18,7 +18,9 @@ use crate::model::histogram::{
 };
 use crate::model::table::DistinctFeature;
 use crate::model::table::DistinctObservation;
+use crate::pipeline::load_environment;
 use crate::pipeline::FileType;
+use crate::pipeline::StreamType;
 use crate::utils::duckdb::{duckdb_open, duckdb_open_memory, duckdb_open_readonly};
 use chrono::{DateTime, TimeZone, Utc};
 use std::path::Path;
@@ -89,6 +91,7 @@ impl RuleProcessor {
         extension_string: &str,
         options_string: &str,
     ) -> Result<Self, Error> {
+        let _ = load_environment();
         let interval = parse_interval(interval_string);
         let mut options: HashMap<&str, &str> = parse_options(options_string);
         for (key, value) in &options {
@@ -185,7 +188,7 @@ impl RuleProcessor {
                 low: 0.0,
                 medium: 0.0,
                 high: 0.0,
-                severe: 0.0
+                severe: 0.0,
             };
 
             let _ = model.deserialize(&mut model_conn);
@@ -354,7 +357,7 @@ impl RuleProcessor {
         rules
     }
 
-    fn load_if_not_already(&mut self) -> Result<(), Error> {
+    fn load_model(&mut self) -> Result<(), Error> {
         if self.histogram_map.len() == 0 {
             match self.load_configuration() {
                 Ok(_) => println!("{}: loaded configuration", self.command),
@@ -380,6 +383,9 @@ impl FileProcessor for RuleProcessor {
     fn get_interval(&self) -> &Interval {
         &self.interval
     }
+    fn get_stream_id(&self) -> u32 {
+        StreamType::IPFIX as u32
+    }
     fn get_file_extension(&self) -> &String {
         &self.extension
     }
@@ -389,12 +395,7 @@ impl FileProcessor for RuleProcessor {
     fn delete_files(&self) -> bool {
         true
     }
-    fn process(&mut self, file_list: &Vec<String>, _schema_type: FileType) -> Result<(), Error> {
-        if let Err(e) = self.load_if_not_already() {
-            println!("{}: {}", self.command, e);
-            return Ok(());
-        }
-     
+    fn process(&mut self, file_list: &Vec<String>) -> Result<(), Error> {
         // Use iterator and join for file list formatting
         let parquet_list = file_list
             .iter()
@@ -411,6 +412,38 @@ impl FileProcessor for RuleProcessor {
         db_in
             .execute_batch(&sql_command)
             .map_err(|e| Error::new(std::io::ErrorKind::Other, format!("DuckDB error: {}", e)))?;
+
+        if let Err(e) = self.load_model() {
+            // If loading the configuration fails,
+            // it is because the model db does not exit,
+            // therefore, just forward the data
+          
+            let current_utc: DateTime<Utc> = Utc::now();
+            let rfc3339_name: String = current_utc.to_rfc3339();
+            // Sanitize rfc3339_name for filesystem safety
+            let safe_rfc3339 = rfc3339_name.replace(":", "-");
+
+            let tmp_filename = format!(".gnat-{}-{}.parquet", self.command, safe_rfc3339);
+            let final_filename =
+                format!("{}/{}", self.output, tmp_filename.trim_start_matches('.'));
+
+            let sql_command = format!(
+                "COPY flow TO '{}' (FORMAT 'parquet', CODEC 'snappy', ROW_GROUP_SIZE 100_000);",tmp_filename
+            );
+            db_in.execute_batch(&sql_command).map_err(|e| {
+                Error::new(std::io::ErrorKind::Other, format!("DuckDB error: {}", e))
+            })?;
+
+            let _ = db_in.close();
+
+            fs::rename(&tmp_filename, &final_filename).map_err(|e| {
+                Error::new(
+                    std::io::ErrorKind::Other,
+                    format!("File rename error: {}", e),
+                )
+            })?;
+            return Ok(());
+        }
 
         // apply rules to the flow table
         println!("{}: applying {} rules...", self.command, self.rules.len());

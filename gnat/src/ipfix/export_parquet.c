@@ -255,7 +255,7 @@ static int IsBroadcastAddress(uint32_t ip)
     return ((ip & BROADCAST_MASK) == BROADCAST_MASK) ? 1 : 0;
 }
 
-#define PARQUET_FLOW_SCHEMA_VERSION 3
+#define IPFIX_STREAM 100
 
 static int AppendIpfixRecord(duckdb_appender appender,
                              const char *observation,
@@ -287,7 +287,7 @@ static int AppendIpfixRecord(duckdb_appender appender,
     g_string_truncate(buffer, 0);
     g_string_truncate(category, 0);
 
-    duckdb_append_uint32(appender, PARQUET_FLOW_SCHEMA_VERSION);
+    duckdb_append_uint32(appender, IPFIX_STREAM); // IPFIX stream
     duckdb_append_null(appender); // UUID
     duckdb_append_varchar(appender, observation);
     duckdb_timestamp start = {(flow->flowStartMilliseconds * 1000)};

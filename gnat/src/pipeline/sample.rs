@@ -8,11 +8,13 @@
 
 use crate::model::histogram::MINIMUM_DAYS;
 use crate::model::table::DistinctObservation;
+use crate::pipeline::load_environment;
 use crate::pipeline::parse_interval;
 use crate::pipeline::parse_options;
 use crate::pipeline::FileProcessor;
 use crate::pipeline::FileType;
 use crate::pipeline::Interval;
+use crate::pipeline::StreamType;
 use crate::utils::duckdb::{duckdb_open, duckdb_open_memory, duckdb_open_readonly};
 use chrono::{DateTime, TimeZone, Utc};
 use duckdb::Connection;
@@ -42,6 +44,7 @@ impl SampleProcessor {
         extension_string: &str,
         options_string: &str,
     ) -> Result<Self, Error> {
+        let _ = load_environment();
         let interval = parse_interval(interval_string);
         let mut options = parse_options(options_string);
         options.entry("retention").or_insert("7");
@@ -103,6 +106,10 @@ impl SampleProcessor {
             }
         }
 
+        if file_list.is_empty() {
+            println!("{}: no files to purge", self.command);
+            return Ok(());
+        }
         let parquet_list = file_list
             .iter()
             .map(|file| format!("'{}'", file))
@@ -112,10 +119,8 @@ impl SampleProcessor {
 
         let sql_command = format!(
             "COPY (SELECT * FROM read_parquet({})
-                WHERE (proto='tcp' OR proto='udp') 
-                  AND (sfirstnonemptycnt > 0 OR dfirstnonemptycnt > 0)
-                  AND date_trunc('day',stime) > date_add(date_trunc('day',stime), - INTERVAL {} DAY)
-                  AND trigger = 0)
+                   WHERE date_trunc('day',stime) > date_add(date_trunc('day',stime), - INTERVAL {} DAY)
+                   AND trigger = 0)
                 TO '{}' (FORMAT 'parquet', CODEC 'snappy', ROW_GROUP_SIZE 100_000);",
             parquet_list, self.retention, tmp_filename
         );
@@ -153,8 +158,8 @@ impl SampleProcessor {
             // Use date_diff to calculate the number of days between the first and last timestamps
             let sql_days_command = format!(
                 "SELECT date_diff('day',first,last) 
-             FROM (SELECT MIN(stime) AS first, MAX(stime) AS last
-             FROM read_parquet({}));",
+                 FROM (SELECT MIN(stime) AS first, MAX(stime) AS last
+                 FROM read_parquet({}));",
                 parquet_list
             );
             let mut stmt = conn.prepare(&sql_days_command).map_err(|e| {
@@ -173,7 +178,7 @@ impl SampleProcessor {
             }
         }
         let sql_distinct_command = format!(
-            "SELECT DISTINCT observe, dvlan, proto FROM read_parquet({}) WHERE proto='tcp' OR proto='udp' GROUP BY ALL ORDER BY ALL",
+            "SELECT DISTINCT observe, dvlan, proto FROM read_parquet({}) GROUP BY ALL ORDER BY ALL",
             parquet_list
         );
         let mut stmt = conn.prepare(&sql_distinct_command).map_err(|e| {
@@ -217,8 +222,7 @@ impl SampleProcessor {
             let sql_command = format!(
                 "COPY (SELECT * FROM read_parquet({})
                  WHERE observe='{}' 
-                   AND dvlan = {} AND proto='{}' 
-                   AND (sfirstnonemptycnt > 0 OR dfirstnonemptycnt > 0)
+                   AND dvlan = {} AND proto='{}'                   
                    AND TRIGGER = 0
                  USING SAMPLE {}%)
                  TO '{}' (FORMAT 'parquet', CODEC 'snappy', ROW_GROUP_SIZE 100_000);",
@@ -252,6 +256,9 @@ impl FileProcessor for SampleProcessor {
     fn get_interval(&self) -> &Interval {
         &self.interval
     }
+    fn get_stream_id(&self) -> u32 {
+        StreamType::IPFIX as u32
+    }
     fn get_file_extension(&self) -> &String {
         &self.extension
     }
@@ -261,7 +268,7 @@ impl FileProcessor for SampleProcessor {
     fn delete_files(&self) -> bool {
         true
     }
-    fn process(&mut self, file_list: &Vec<String>, _schema_type: FileType) -> Result<(), Error> {
+    fn process(&mut self, file_list: &Vec<String>) -> Result<(), Error> {
         self.generate_samples(file_list)?;
         self.purge_old()?;
         Ok(())

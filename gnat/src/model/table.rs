@@ -237,6 +237,7 @@ pub trait TableTrait {
 }
 pub static CREATE_METRICS_TABLE: &str = "CREATE TABLE IF NOT EXISTS metrics
 (
+    stream UINTEGER,
     bucket TIMESTAMP,
     observe VARCHAR,
     name VARCHAR,
@@ -246,6 +247,7 @@ pub static CREATE_METRICS_TABLE: &str = "CREATE TABLE IF NOT EXISTS metrics
 
 #[derive(Debug)]
 pub struct MetricRecord {
+    pub stream: u32,
     pub bucket: u64,
     pub observe: String,
     pub name: String,
@@ -255,7 +257,7 @@ pub struct MetricRecord {
 
 #[derive(Debug)]
 pub struct MemFlowRecord {
-    pub version: u32,
+    pub stream: u32,
     pub id: String,
     pub observe: String,
     pub stime: u64,

@@ -7,11 +7,13 @@
  */
 
 use crate::ipfix::libfixbuf::unsafe_ipfix_file_import;
+use crate::pipeline::load_environment;
 use crate::pipeline::parse_interval;
 use crate::pipeline::parse_options;
 use crate::pipeline::FileProcessor;
 use crate::pipeline::FileType;
 use crate::pipeline::Interval;
+use crate::pipeline::StreamType;
 use duckdb::Connection;
 use std::io::Error;
 use std::path::Path;
@@ -38,6 +40,7 @@ impl ImportProcessor {
         extension_string: &str,
         options_string: &str,
     ) -> Result<Self, Error> {
+        let _ = load_environment();
         let interval = parse_interval(interval_string);
         let mut options = parse_options(options_string);
         options.entry("observation").or_insert("gnat");
@@ -93,6 +96,9 @@ impl FileProcessor for ImportProcessor {
     fn get_interval(&self) -> &Interval {
         &self.interval
     }
+    fn get_stream_id(&self) -> u32 {
+        StreamType::IPFIX as u32
+    }
     fn get_file_extension(&self) -> &String {
         &self.extension
     }
@@ -102,7 +108,7 @@ impl FileProcessor for ImportProcessor {
     fn delete_files(&self) -> bool {
         true
     }
-    fn process(&mut self, file_list: &Vec<String>, schema_type: FileType) -> Result<(), Error> {
+    fn process(&mut self, file_list: &Vec<String>) -> Result<(), Error> {
         for file in file_list.iter() {
             let mut observation = self.observation.clone();
             if let Some(i) = file.find('-') {
@@ -110,10 +116,7 @@ impl FileProcessor for ImportProcessor {
                     observation = file[..i].to_string();
                 }
             }
-            // .yaf files use schema version 0
-            if schema_type != FileType::IPFIX_YAF {
-                return Err(Error::other("unsupported schema version"));
-            }
+
             let import_result = unsafe_ipfix_file_import(
                 &self.command,
                 file,

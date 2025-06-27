@@ -59,7 +59,7 @@ pub struct HistogramModels {
 }
 
 impl HistogramModels {
-    pub fn serialize(&self, conn: &mut Connection) {
+    pub fn serialize(&self, conn: &mut Connection) -> Result<(), Error> {
         for (_name, histogram) in &self.numerical {
             histogram.serialize(conn, &self.observe, self.vlan, &self.proto);
         }
@@ -79,6 +79,7 @@ impl HistogramModels {
         for (_name, histogram) in &self.time_category {
             histogram.serialize(conn, &self.observe, self.vlan, &self.proto);
         }
+        Ok(())
     }
 
     pub fn deserialize(&mut self, conn: &Connection) -> Result<(), Error> {
@@ -207,7 +208,7 @@ impl HistogramModels {
         let record_iter = stmt
             .query_map([], |row| {
                 Ok(MemFlowRecord {
-                    version: row.get(0).expect("missing value"),
+                    stream: row.get(0).expect("missing value"),
                     id: row.get(1).expect("missing value"),
                     observe: row.get(2).expect("missing value"),
                     stime: row.get(3).expect("missing value"),
@@ -273,96 +274,99 @@ impl HistogramModels {
             })
             .expect("query map failed");
 
-        let _ = db_out.execute_batch("BEGIN TRANSACTION;");
         let mut trigger_count: u64 = 0;
-        for record in record_iter {
-            let mut record = record?;
+        {
+            let _ = db_out.execute_batch("BEGIN TRANSACTION;");
 
-            let mut is_first = true;
-            let risk_bits: u64 = record.risk_bits;
-            let mut risk_list = format!("list_value(");
-            if risk_bits > 0 {
-                for i in 0..64 {
-                    let bit_is_set = (risk_bits >> i) & 1 == 1;
-                    if bit_is_set {
-                        if is_first {
-                            is_first = false;
-                        } else {
-                            risk_list.push_str(",");
+            for record in record_iter {
+                let mut record = record?;
+
+                let mut is_first = true;
+                let risk_bits: u64 = record.risk_bits;
+                let mut risk_list = format!("list_value(");
+                if risk_bits > 0 {
+                    for i in 0..64 {
+                        let bit_is_set = (risk_bits >> i) & 1 == 1;
+                        if bit_is_set {
+                            if is_first {
+                                is_first = false;
+                            } else {
+                                risk_list.push_str(",");
+                            }
+                            risk_list.push_str("'");
+                            risk_list.push_str(Self::riskname_by_index(i));
+                            risk_list.push_str("'");
                         }
-                        risk_list.push_str("'");
-                        risk_list.push_str(Self::riskname_by_index(i));
-                        risk_list.push_str("'");
                     }
                 }
-            }
-            risk_list.push_str(")");
+                risk_list.push_str(")");
 
-            //
-            // write hbos map
-            //
-            let mut hbos_map = format!("map_from_entries([");
-            let mut is_first_map = true;
+                //
+                // write hbos map
+                //
+                let mut hbos_map = format!("map_from_entries([");
+                let mut is_first_map = true;
 
-            for (name, histogram) in &mut self.numerical {
-                let feature_prob = histogram.get_probability(&record);
-                if is_first_map {
-                    is_first_map = false;
-                } else {
-                    hbos_map.push_str(",");
+                for (name, histogram) in &mut self.numerical {
+                    let feature_prob = histogram.get_probability(&record);
+                    if is_first_map {
+                        is_first_map = false;
+                    } else {
+                        hbos_map.push_str(",");
+                    }
+                    hbos_map.push_str(&format!("{{k:'{}',v:{:.3}}}", name, feature_prob));
                 }
-                hbos_map.push_str(&format!("{{k:'{}',v:{:.3}}}", name, feature_prob));
-            }
 
-            for (name, histogram) in &mut self.numeric_category {
-                let feature_prob = histogram.get_probability(&record);
-                if is_first_map {
-                    is_first_map = false;
-                } else {
-                    hbos_map.push_str(",");
+                for (name, histogram) in &mut self.numeric_category {
+                    let feature_prob = histogram.get_probability(&record);
+                    if is_first_map {
+                        is_first_map = false;
+                    } else {
+                        hbos_map.push_str(",");
+                    }
+                    hbos_map.push_str(&format!("{{k:'{}',v:{:.3}}}", name, feature_prob));
                 }
-                hbos_map.push_str(&format!("{{k:'{}',v:{:.3}}}", name, feature_prob));
-            }
 
-            for (name, histogram) in &mut self.string_category {
-                let feature_prob = histogram.get_probability(&record);
-                if is_first_map {
-                    is_first_map = false;
-                } else {
-                    hbos_map.push_str(",");
+                for (name, histogram) in &mut self.string_category {
+                    let feature_prob = histogram.get_probability(&record);
+                    if is_first_map {
+                        is_first_map = false;
+                    } else {
+                        hbos_map.push_str(",");
+                    }
+                    hbos_map.push_str(&format!("{{k:'{}',v:{:.3}}}", name, feature_prob));
                 }
-                hbos_map.push_str(&format!("{{k:'{}',v:{:.3}}}", name, feature_prob));
-            }
 
-            for (name, histogram) in &mut self.ipaddr_category {
-                let feature_prob = histogram.get_probability(&record);
-                if is_first_map {
-                    is_first_map = false;
-                } else {
-                    hbos_map.push_str(",");
+                for (name, histogram) in &mut self.ipaddr_category {
+                    let feature_prob = histogram.get_probability(&record);
+                    if is_first_map {
+                        is_first_map = false;
+                    } else {
+                        hbos_map.push_str(",");
+                    }
+                    hbos_map.push_str(&format!("{{k:'{}',v:{:.3}}}", name, feature_prob));
                 }
-                hbos_map.push_str(&format!("{{k:'{}',v:{:.3}}}", name, feature_prob));
-            }
 
-            for (name, histogram) in &mut self.time_category {
-                let feature_prob = histogram.get_probability(&record);
-                if is_first_map {
-                    is_first_map = false;
-                } else {
-                    hbos_map.push_str(",");
+                for (name, histogram) in &mut self.time_category {
+                    let feature_prob = histogram.get_probability(&record);
+                    if is_first_map {
+                        is_first_map = false;
+                    } else {
+                        hbos_map.push_str(",");
+                    }
+                    hbos_map.push_str(&format!("{{k:'{}',v:{:.3}}}", name, feature_prob));
                 }
-                hbos_map.push_str(&format!("{{k:'{}',v:{:.3}}}", name, feature_prob));
-            }
-            hbos_map.push_str("])");
+                hbos_map.push_str("])");
 
-            let sql_insert_command = format!(
-                "INSERT INTO trigger_table BY POSITION VALUES ('{}', {}, {}, {});",
-                record.id, record.trigger, risk_list, hbos_map
-            );
-            let _ = db_out.execute_batch(&sql_insert_command);
-            trigger_count += 1;
+                let sql_insert_command = format!(
+                    "INSERT INTO trigger_table BY POSITION VALUES ('{}', {}, {}, {});",
+                    record.id, record.trigger, risk_list, hbos_map
+                );
+                let _ = db_out.execute_batch(&sql_insert_command);
+                trigger_count += 1;
+            }
+            let _ = db_out.execute_batch("COMMIT;");
         }
-        let _ = db_out.execute_batch("COMMIT;");
         Ok(trigger_count)
     }
 
@@ -381,7 +385,7 @@ impl HistogramModels {
         let mut stmt = db_in.prepare(&sql_command)?;
         let record_iter = stmt.query_map([], |row| {
             Ok(MemFlowRecord {
-                version: row.get(0).expect("missing value"),
+                stream: row.get(0).expect("missing value"),
                 id: row.get(1).expect("missing value"),
                 observe: row.get(2).expect("missing value"),
                 stime: row.get(3).expect("missing value"),
@@ -557,7 +561,11 @@ impl HistogramModels {
 
         return (low, medium, high, severe);
     }
-    pub fn summarize(&mut self, parquet_conn: &mut Connection, db_conn: &mut Connection) {
+    pub fn summarize(
+        &mut self,
+        parquet_conn: &mut Connection,
+        db_conn: &mut Connection,
+    ) -> Result<(), Error> {
         let mut score_conn = duckdb_open_memory(2);
 
         let sql_command = format!(
@@ -568,7 +576,7 @@ impl HistogramModels {
         let record_iter = stmt
             .query_map([], |row| {
                 Ok(MemFlowRecord {
-                    version: row.get(0).expect("missing value"),
+                    stream: row.get(0).expect("missing value"),
                     id: row.get(1).expect("missing value"),
                     observe: row.get(2).expect("missing value"),
                     stime: row.get(3).expect("missing value"),
@@ -646,10 +654,10 @@ impl HistogramModels {
             for record in record_iter {
                 let flow_record = record.unwrap();
 
-                if flow_record.proto == "tcp" && !flow_record.iflags.starts_with("Ss.a") {
-                    // TCP three-way handshake established
-                    continue;
-                }
+                //if flow_record.proto == "tcp" && !flow_record.iflags.starts_with("Ss.a") {
+                //    // TCP three-way handshake established
+                //    continue;
+                //}
 
                 let mut hbos_score: f64 = 0.0;
                 for (_name, histogram) in &mut self.numerical {
@@ -751,6 +759,8 @@ impl HistogramModels {
                 .expect("hbos_summary");
             let _ = appender.flush();
         }
+        let _ = score_conn.close();
+        Ok(())
     }
 
     pub fn build(

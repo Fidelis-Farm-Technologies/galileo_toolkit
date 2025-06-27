@@ -6,6 +6,7 @@
  * See license information in LICENSE.
  */
 
+use crate::pipeline::StreamType;
 use crate::utils::duckdb::{duckdb_open, duckdb_open_memory, duckdb_open_readonly};
 use duckdb::Connection;
 
@@ -16,7 +17,7 @@ use duckdb::{params, Appender, DropBehavior};
 use std::fs;
 use std::process;
 
-
+use crate::pipeline::load_environment;
 use crate::pipeline::parse_interval;
 use crate::pipeline::parse_options;
 use crate::pipeline::FileProcessor;
@@ -44,6 +45,7 @@ impl MergeProcessor {
         extension_string: &str,
         options_string: &str,
     ) -> Result<Self, Error> {
+        let _ = load_environment();
         let interval = parse_interval(interval_string);
         let mut options = parse_options(options_string);
 
@@ -79,6 +81,9 @@ impl FileProcessor for MergeProcessor {
     fn get_interval(&self) -> &Interval {
         &self.interval
     }
+    fn get_stream_id(&self) -> u32 {
+        StreamType::ADHOC as u32
+    }
     fn get_file_extension(&self) -> &String {
         &self.extension
     }
@@ -88,7 +93,7 @@ impl FileProcessor for MergeProcessor {
     fn delete_files(&self) -> bool {
         true
     }
-    fn process(&mut self, file_list: &Vec<String>, schema_version: FileType) -> Result<(), Error> {
+    fn process(&mut self, file_list: &Vec<String>) -> Result<(), Error> {
         // Use iterator and join for file list formatting
         let parquet_list = file_list
             .iter()
@@ -113,6 +118,8 @@ impl FileProcessor for MergeProcessor {
             );
         conn.execute_batch(&sql_command)
             .map_err(|e| Error::new(std::io::ErrorKind::Other, format!("DuckDB error: {}", e)))?;
+
+        let _ = conn.close();
 
         fs::rename(&tmp_filename, &final_filename).map_err(|e| {
             Error::new(

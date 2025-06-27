@@ -6,22 +6,22 @@
  * See license information in LICENSE.
  */
 
+use crate::pipeline::load_environment;
+use crate::pipeline::parse_interval;
+use crate::pipeline::parse_options;
 use crate::pipeline::use_motherduck;
-
+use crate::pipeline::FileProcessor;
+use crate::pipeline::FileType;
+use crate::pipeline::Interval;
+use crate::pipeline::StreamType;
 use crate::utils::duckdb::{duckdb_open, duckdb_open_memory, duckdb_open_readonly};
 use chrono::prelude::*;
 use chrono::{TimeZone, Utc};
 use duckdb::{Appender, Connection, DropBehavior};
 use std::fs;
+use std::io::Error;
 use std::process;
 use std::time::SystemTime;
-
-use crate::pipeline::parse_interval;
-use crate::pipeline::parse_options;
-use crate::pipeline::FileProcessor;
-use crate::pipeline::FileType;
-use crate::pipeline::Interval;
-use std::io::Error;
 
 use crate::model::table::appid::AppIdTable;
 use crate::model::table::asn::AsnTable;
@@ -71,6 +71,7 @@ impl AggregationProcessor {
         extension_string: &str,
         options_string: &str,
     ) -> Result<Self, Error> {
+        let _ = load_environment();
         let interval = parse_interval(interval_string);
         let mut options = parse_options(options_string);
         options.entry("retention").or_insert("30");
@@ -132,15 +133,17 @@ impl AggregationProcessor {
         let mut db_conn: Connection = Connection::open_in_memory().expect("memory");
         if use_motherduck {
             db_conn = duckdb_open(output, 2);
+            let _ = db_conn.execute_batch(CREATE_METRICS_TABLE).map_err(|e| {
+                Error::new(std::io::ErrorKind::Other, format!("DuckDB error: {}", e))
+            })?;
             println!("{}: connection established with {}", command, output);
         } else {
             db_conn = duckdb_open(&cache_file, 2);
+            let _ = db_conn
+                .execute_batch(CREATE_METRICS_TABLE)
+                .expect("execute_batch");
             println!("{}: cache [{}]", command, cache_file);
         }
-
-        db_conn
-            .execute_batch(CREATE_METRICS_TABLE)
-            .expect("execute_batch");
 
         let mut table_list: Vec<Box<dyn TableTrait>> = Vec::new();
         table_list.push(Box::new(appid));
@@ -191,6 +194,9 @@ impl FileProcessor for AggregationProcessor {
     fn get_interval(&self) -> &Interval {
         &self.interval
     }
+    fn get_stream_id(&self) -> u32 {
+        StreamType::IPFIX as u32
+    }
     fn get_file_extension(&self) -> &String {
         &self.extension
     }
@@ -200,7 +206,7 @@ impl FileProcessor for AggregationProcessor {
     fn delete_files(&self) -> bool {
         return true;
     }
-    fn process(&mut self, file_list: &Vec<String>, _schema_type: FileType) -> Result<(), Error> {
+    fn process(&mut self, file_list: &Vec<String>) -> Result<(), Error> {
         // Use iterator and join for file list formatting
         let parquet_list = file_list
             .iter()
@@ -230,6 +236,7 @@ impl FileProcessor for AggregationProcessor {
                     format!("DuckDB appender error: {}", e),
                 )
             })?;
+
             for table in &self.table_list {
                 table.insert(&mem_source, &mut cache_appender);
             }
@@ -248,7 +255,7 @@ impl FileProcessor for AggregationProcessor {
                 "CREATE TABLE IF NOT EXISTS metrics AS SELECT * FROM read_parquet('{}')",
                 tmp_parquet
             );
-  
+
             self.db_conn.execute_batch(&sql_export).map_err(|e| {
                 Error::new(std::io::ErrorKind::Other, format!("DuckDB error: {}", e))
             })?;

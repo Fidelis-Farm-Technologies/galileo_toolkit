@@ -9,19 +9,17 @@
 extern crate exitcode;
 
 use crate::pipeline::StreamType;
-use crate::utils::duckdb::{duckdb_open, duckdb_open_memory, duckdb_open_readonly};
+use crate::utils::duckdb::duckdb_open_memory;
 use duckdb::Connection;
 use serde::{Deserialize, Serialize};
 use std::fs;
 
-use chrono::{DateTime, TimeZone, Utc};
-use std::time::SystemTime;
+use chrono::{DateTime, Utc};
 
 use crate::pipeline::load_environment;
 use crate::pipeline::parse_interval;
 use crate::pipeline::parse_options;
 use crate::pipeline::FileProcessor;
-use crate::pipeline::FileType;
 use crate::pipeline::Interval;
 use std::io::Error;
 
@@ -54,8 +52,8 @@ fn zero_port() -> Option<u16> {
 
 pub struct TagProcessor {
     pub command: String,
-    pub input: String,
-    pub output: String,
+    pub input_list: Vec<String>,
+    pub output_list: Vec<String>,
     pub pass: String,
     pub interval: Interval,
     pub extension: String,
@@ -84,10 +82,14 @@ impl TagProcessor {
 
         let tag_list = TagProcessor::load_tag_file(&rule_file);
 
+        let mut input_list = Vec::<String>::new();
+        input_list.push(input.to_string());
+        let mut output_list = Vec::<String>::new();
+        output_list.push(output.to_string());
         Ok(Self {
             command: command.to_string(),
-            input: input.to_string(),
-            output: output.to_string(),
+            input_list: input_list,
+            output_list: output_list,
             pass: pass.to_string(),
             interval: interval,
             extension: extension_string.to_string(),
@@ -166,8 +168,14 @@ impl TagProcessor {
         let current_utc: DateTime<Utc> = Utc::now();
         let rfc3339_name: String = current_utc.to_rfc3339();
         let safe_rfc3339 = rfc3339_name.replace(":", "-");
-        let tmp_filename = format!(".gnat-{}-{}.parquet", self.command, safe_rfc3339);
-        let final_filename = format!("{}/{}", self.output, tmp_filename.trim_start_matches('.'));
+        let tmp_filename = format!(
+            "{}/.gnat-{}-{}.parquet",
+            self.output_list[0], self.command, safe_rfc3339
+        );
+        let final_filename = format!(
+            "{}/gnat-{}-{}.parquet",
+            self.output_list[0], self.command, safe_rfc3339
+        );
         let sql_command = format!(
             "COPY (SELECT * FROM flow) TO '{}' (FORMAT 'parquet', CODEC 'snappy', ROW_GROUP_SIZE 100_000);",
             tmp_filename
@@ -181,11 +189,13 @@ impl FileProcessor for TagProcessor {
     fn get_command(&self) -> &String {
         &self.command
     }
-    fn get_input(&self) -> &String {
-        &self.input
+    fn get_input(&self, input_list: &mut Vec<String>) -> Result<(), Error> {
+        *input_list = self.input_list.clone();
+        Ok(())
     }
-    fn get_output(&self) -> &String {
-        &self.output
+    fn get_output(&self, output_list: &mut Vec<String>) -> Result<(), Error> {
+        *output_list = self.output_list.clone();
+        Ok(())
     }
     fn get_pass(&self) -> &String {
         &self.pass

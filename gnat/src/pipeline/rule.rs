@@ -12,28 +12,19 @@ use crate::model::histogram::number::NumberHistogram;
 use crate::model::histogram::numeric_category::NumericCategoryHistogram;
 use crate::model::histogram::string_category::StringCategoryHistogram;
 use crate::model::histogram::time_category::TimeCategoryHistogram;
-use crate::model::histogram::{
-    MD_FLOW_TABLE, MODEL_DISTINCT_FEATURE, MODEL_DISTINCT_OBSERVATIONS,
-    PARQUET_DISTINCT_OBSERVATIONS,
-};
-use crate::model::table::DistinctFeature;
+use crate::model::histogram::{MODEL_DISTINCT_OBSERVATIONS, PARQUET_DISTINCT_OBSERVATIONS};
 use crate::model::table::DistinctObservation;
 use crate::pipeline::load_environment;
-use crate::pipeline::FileType;
-use crate::pipeline::StreamType;
-use crate::utils::duckdb::{duckdb_open, duckdb_open_memory, duckdb_open_readonly};
-use chrono::{DateTime, TimeZone, Utc};
-use std::path::Path;
-use std::time::Instant;
-use std::time::SystemTime;
 
-use duckdb::Connection;
+use crate::pipeline::StreamType;
+use crate::utils::duckdb::{duckdb_open_memory, duckdb_open_readonly};
+use chrono::{DateTime, Utc};
+use std::path::Path;
+
 use serde::{Deserialize, Serialize};
-use std::io::{BufWriter, Write};
 
 use std::collections::HashMap;
 use std::fs;
-use std::fs::File;
 use std::io::Error;
 
 use crate::pipeline::parse_interval;
@@ -69,8 +60,8 @@ pub struct RuleJsonStructure {
 
 pub struct RuleProcessor {
     pub command: String,
-    pub input: String,
-    pub output: String,
+    pub input_list: Vec<String>,
+    pub output_list: Vec<String>,
     pub pass: String,
     pub interval: Interval,
     pub extension: String,
@@ -93,7 +84,7 @@ impl RuleProcessor {
     ) -> Result<Self, Error> {
         let _ = load_environment();
         let interval = parse_interval(interval_string);
-        let mut options: HashMap<&str, &str> = parse_options(options_string);
+        let options: HashMap<&str, &str> = parse_options(options_string);
         for (key, value) in &options {
             if !value.is_empty() {
                 println!("{}: [{}={}]", command, key, value);
@@ -106,17 +97,19 @@ impl RuleProcessor {
 
         let rule_file = options.get("rule").expect("expected rule file").to_string();
 
-        let mut md_conn: Connection = Connection::open_in_memory().expect("memory");
-
         let rules: Vec<String> = Vec::new();
         let histogram_map: HashMap<String, HistogramModels> = HashMap::new();
         let distinct_features: Vec<String> = Vec::new();
-        let sql_table_schema = String::from("");
+        //let sql_table_schema = String::from("");
 
+        let mut input_list = Vec::<String>::new();
+        input_list.push(input.to_string());
+        let mut output_list = Vec::<String>::new();
+        output_list.push(output.to_string());
         Ok(Self {
             command: command.to_string(),
-            input: input.to_string(),
-            output: output.to_string(),
+            input_list: input_list,
+            output_list: output_list,
             pass: pass.to_string(),
             interval,
             extension: extension_string.to_string(),
@@ -143,7 +136,7 @@ impl RuleProcessor {
             );
             return Err(Error::other(error_msg));
         }
-        self.rules = RuleProcessor::load_rule_file(&self.rule_spec);
+        self.rules = RuleProcessor::load_rule_file(&self.rule_spec).expect("loading rule file");
 
         let mut model_conn = duckdb_open_readonly(&self.model_spec, 2);
         let mut stmt = model_conn
@@ -189,6 +182,7 @@ impl RuleProcessor {
                 medium: 0.0,
                 high: 0.0,
                 severe: 0.0,
+                filter: "".to_string(),
             };
 
             let _ = model.deserialize(&mut model_conn);
@@ -219,7 +213,7 @@ impl RuleProcessor {
         Ok(())
     }
 
-    fn load_rule_file(rule_spec: &String) -> Vec<String> {
+    fn load_rule_file(rule_spec: &str) -> Result<Vec<String>, Error> {
         let json_data: String = fs::read_to_string(rule_spec).expect("unable to read JSON file");
         let policies: Vec<RuleJsonStructure> =
             serde_json::from_str(&json_data).expect("failed to parse rule file");
@@ -244,8 +238,10 @@ impl RuleProcessor {
             if rule.action == "trigger" {
                 rule_line = String::from("SET trigger = 1 WHERE ");
             } else if rule.action != "ignore" {
-                eprintln!("error: 'action' invalid value '{}'", rule.action);
-                std::process::exit(exitcode::CONFIG)
+                return Err(Error::other(format!(
+                    "error: 'action' invalid value '{}', only 'trigger' and 'ignore' are supported",
+                    rule.action
+                )));
             }
 
             if !rule.observe.is_empty() {
@@ -354,7 +350,7 @@ impl RuleProcessor {
         }
 
         println!(".done.");
-        rules
+        Ok(rules)
     }
 
     fn load_model(&mut self) -> Result<(), Error> {
@@ -371,11 +367,13 @@ impl FileProcessor for RuleProcessor {
     fn get_command(&self) -> &String {
         &self.command
     }
-    fn get_input(&self) -> &String {
-        &self.input
+    fn get_input(&self, input_list: &mut Vec<String>) -> Result<(), Error> {
+        *input_list = self.input_list.clone();
+        Ok(())
     }
-    fn get_output(&self) -> &String {
-        &self.output
+    fn get_output(&self, output_list: &mut Vec<String>) -> Result<(), Error> {
+        *output_list = self.output_list.clone();
+        Ok(())
     }
     fn get_pass(&self) -> &String {
         &self.pass
@@ -404,6 +402,14 @@ impl FileProcessor for RuleProcessor {
             .join(",");
         let parquet_list = format!("[{}]", parquet_list);
 
+        if let Err(_e) = self.load_model() {
+            // If loading the model fails,
+            // it is because the model db does not exit,
+            // therefore, just forward the data
+            let _ = self.forward(parquet_list, &self.output_list.clone())?;
+            return Ok(());
+        }
+
         let mut db_in = duckdb_open_memory(2);
         let sql_command = format!(
             "CREATE TABLE flow AS SELECT * FROM read_parquet({});",
@@ -412,38 +418,6 @@ impl FileProcessor for RuleProcessor {
         db_in
             .execute_batch(&sql_command)
             .map_err(|e| Error::new(std::io::ErrorKind::Other, format!("DuckDB error: {}", e)))?;
-
-        if let Err(e) = self.load_model() {
-            // If loading the configuration fails,
-            // it is because the model db does not exit,
-            // therefore, just forward the data
-          
-            let current_utc: DateTime<Utc> = Utc::now();
-            let rfc3339_name: String = current_utc.to_rfc3339();
-            // Sanitize rfc3339_name for filesystem safety
-            let safe_rfc3339 = rfc3339_name.replace(":", "-");
-
-            let tmp_filename = format!(".gnat-{}-{}.parquet", self.command, safe_rfc3339);
-            let final_filename =
-                format!("{}/{}", self.output, tmp_filename.trim_start_matches('.'));
-
-            let sql_command = format!(
-                "COPY flow TO '{}' (FORMAT 'parquet', CODEC 'snappy', ROW_GROUP_SIZE 100_000);",tmp_filename
-            );
-            db_in.execute_batch(&sql_command).map_err(|e| {
-                Error::new(std::io::ErrorKind::Other, format!("DuckDB error: {}", e))
-            })?;
-
-            let _ = db_in.close();
-
-            fs::rename(&tmp_filename, &final_filename).map_err(|e| {
-                Error::new(
-                    std::io::ErrorKind::Other,
-                    format!("File rename error: {}", e),
-                )
-            })?;
-            return Ok(());
-        }
 
         // apply rules to the flow table
         println!("{}: applying {} rules...", self.command, self.rules.len());
@@ -477,11 +451,7 @@ impl FileProcessor for RuleProcessor {
 
         let current_utc: DateTime<Utc> = Utc::now();
         let rfc3339_name: String = current_utc.to_rfc3339();
-        let tmp_json_filename = format!(
-            ".gnat-{}.{}.json",
-            self.command,
-            rfc3339_name.replace(":", "-")
-        );
+
         let tmp_parquet_filename = format!(
             ".gnat-{}-{}.parquet",
             self.command,
@@ -489,7 +459,7 @@ impl FileProcessor for RuleProcessor {
         );
         let parquet_filename = format!(
             "{}/gnat-{}-{}.parquet",
-            self.output,
+            self.output_list[0],
             self.command,
             rfc3339_name.replace(":", "-")
         );

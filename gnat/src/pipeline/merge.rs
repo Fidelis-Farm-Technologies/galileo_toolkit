@@ -1,35 +1,33 @@
 /*
  * Galileo Network Analytics (GNA) Toolkit
  *
- * Copyright 2024-2025 Fidelis Farm & Technologies, LLC
+ * Copyright 2024-2025
+ * Fidelis Farm & Technologies, LLC
  * All Rights Reserved.
  * See license information in LICENSE.
  */
-
-use crate::pipeline::StreamType;
-use crate::utils::duckdb::{duckdb_open, duckdb_open_memory, duckdb_open_readonly};
-use duckdb::Connection;
-
-use crate::model::table::MemFlowRecord;
-use chrono::{DateTime, TimeZone, Utc};
-
-use duckdb::{params, Appender, DropBehavior};
-use std::fs;
-use std::process;
 
 use crate::pipeline::load_environment;
 use crate::pipeline::parse_interval;
 use crate::pipeline::parse_options;
 use crate::pipeline::FileProcessor;
-use crate::pipeline::FileType;
 use crate::pipeline::Interval;
-
+use crate::pipeline::StreamType;
+use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
+use std::fs;
 use std::io::Error;
+use std::path::Path;
+
+#[derive(Clone, Serialize, Deserialize)]
+pub struct InputJsonStructure {
+    input: String,
+}
 
 pub struct MergeProcessor {
     pub command: String,
-    pub input: String,
-    pub output: String,
+    pub input_list: Vec<String>,
+    pub output_list: Vec<String>,
     pub pass: String,
     pub interval: Interval,
     pub extension: String,
@@ -47,7 +45,7 @@ impl MergeProcessor {
     ) -> Result<Self, Error> {
         let _ = load_environment();
         let interval = parse_interval(interval_string);
-        let mut options = parse_options(options_string);
+        let options = parse_options(options_string);
 
         for (key, value) in &options {
             if !value.is_empty() {
@@ -55,25 +53,55 @@ impl MergeProcessor {
             }
         }
 
+        if !Path::new(input).is_file() {
+            return Err(Error::other("input is not a JSON file"));
+        }
+
+        let mut input_list = Vec::<String>::new();
+        Self::load_json_file(input, &mut input_list)?;
+        let mut output_list = Vec::<String>::new();
+        output_list.push(output.to_string());
         Ok(Self {
             command: command.to_string(),
-            input: input.to_string(),
-            output: output.to_string(),
+            input_list: input_list,
+            output_list: output_list,
             pass: pass.to_string(),
             interval: interval,
             extension: extension_string.to_string(),
         })
+    }
+    fn load_json_file(input_spec: &str, input_list: &mut Vec<String>) -> Result<(), Error> {
+        let json_data: String = fs::read_to_string(input_spec).expect("unable to read JSON file");
+        let input_directories: Vec<InputJsonStructure> =
+            serde_json::from_str(&json_data).expect("failed to parse input file");
+
+        if input_directories.is_empty() {
+            return Err(Error::other("no directories in input file"));
+        }
+        let mut collison_map = HashMap::new();
+        for dir in input_directories {
+            if collison_map.insert(dir.input.clone(), "x").is_none() {
+                println!("\tinput: [{}]", dir.input);
+                input_list.push(dir.input);            
+            } else {
+                println!("\t{} (duplicate)", dir.input);
+            }
+        }
+
+        Ok(())
     }
 }
 impl FileProcessor for MergeProcessor {
     fn get_command(&self) -> &String {
         &self.command
     }
-    fn get_input(&self) -> &String {
-        &self.input
+    fn get_input(&self, input_list: &mut Vec<String>) -> Result<(), Error> {
+        *input_list = self.input_list.clone();
+        Ok(())
     }
-    fn get_output(&self) -> &String {
-        &self.output
+    fn get_output(&self, output_list: &mut Vec<String>) -> Result<(), Error> {
+        *output_list = self.output_list.clone();
+        Ok(())
     }
     fn get_pass(&self) -> &String {
         &self.pass
@@ -101,32 +129,8 @@ impl FileProcessor for MergeProcessor {
             .collect::<Vec<_>>()
             .join(",");
         let parquet_list = format!("[{}]", parquet_list);
+        let _ = self.forward(parquet_list, &self.output_list.clone())?;
 
-        let conn = duckdb_open_memory(2);
-
-        let current_utc: DateTime<Utc> = Utc::now();
-        let rfc3339_name: String = current_utc.to_rfc3339();
-        // Sanitize rfc3339_name for filesystem safety
-        let safe_rfc3339 = rfc3339_name.replace(":", "-");
-
-        let tmp_filename = format!(".gnat-{}-{}.parquet", self.command, safe_rfc3339);
-        let final_filename = format!("{}/{}", self.output, tmp_filename.trim_start_matches('.'));
-
-        let sql_command = format!(
-                "COPY (SELECT * FROM read_parquet({})) TO '{}' (FORMAT 'parquet', CODEC 'snappy', ROW_GROUP_SIZE 100_000);",
-                parquet_list, tmp_filename
-            );
-        conn.execute_batch(&sql_command)
-            .map_err(|e| Error::new(std::io::ErrorKind::Other, format!("DuckDB error: {}", e)))?;
-
-        let _ = conn.close();
-
-        fs::rename(&tmp_filename, &final_filename).map_err(|e| {
-            Error::new(
-                std::io::ErrorKind::Other,
-                format!("File rename error: {}", e),
-            )
-        })?;
         Ok(())
     }
 }

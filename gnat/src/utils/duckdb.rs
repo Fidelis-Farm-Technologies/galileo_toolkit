@@ -1,7 +1,5 @@
 use duckdb::{AccessMode, Config, Connection};
 
-use std::path::Path;
-
 pub fn duckdb_open(db_file: &str, mem_gig: u32) -> Connection {
     let mem_threshold = format!("{}GB", mem_gig);
 

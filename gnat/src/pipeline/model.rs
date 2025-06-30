@@ -22,12 +22,9 @@ use crate::model::table::DistinctObservation;
 use crate::pipeline::parse_interval;
 use crate::pipeline::parse_options;
 use crate::pipeline::FileProcessor;
-use crate::pipeline::FileType;
 use crate::pipeline::Interval;
 use chrono::Datelike;
-use chrono::{DateTime, TimeZone, Utc};
-use duckdb::Connection;
-use std::time::UNIX_EPOCH;
+use chrono::{DateTime, Utc};
 
 use crate::utils::duckdb::{duckdb_open, duckdb_open_memory};
 
@@ -35,16 +32,16 @@ use std::collections::HashMap;
 use std::fs;
 use std::io::Error;
 use std::path::Path;
-use std::time::SystemTime;
 
 pub struct ModelProcessor {
     pub command: String,
-    pub input: String,
-    pub model: String,
+    pub input_list: Vec<String>,
+    pub model_list: Vec<String>,
     pub pass: String,
     pub interval: Interval,
     pub extension: String,
     pub feature_list: Vec<String>,
+    pub filter: String,
     pub md_database: String,
 }
 
@@ -64,6 +61,9 @@ impl ModelProcessor {
         options
             .entry("features")
             .or_insert("daddr,dport,dentropy,sentropy,diat,siat,spd,pcr,orient,stime");
+        options
+            .entry("filter")
+            .or_insert("proto='udp' OR (proto='tcp' AND iflags ^@ 'Ss.a')");
         options.entry("md").or_insert("");
 
         for (key, value) in &options {
@@ -71,7 +71,7 @@ impl ModelProcessor {
                 println!("{}: [{}={}]", command, key, value);
             }
         }
-
+        let mut filter = options.get("filter").expect("expected filter").to_string();
         let mut md_database = options.get("md").expect("expected model").to_string();
         if !md_database.is_empty() {
             let md_parameter = format!("md:{}", md_database);
@@ -84,25 +84,30 @@ impl ModelProcessor {
         let features = options.get("features").expect("expected feature");
         let feature_list: Vec<String> = features.split(",").map(str::to_string).collect();
 
+        let mut input_list = Vec::<String>::new();
+        input_list.push(input.to_string());
+        let mut model_list = Vec::<String>::new();
+        model_list.push(output.to_string());
         Ok(Self {
             command: command.to_string(),
-            input: input.to_string(),
-            model: output.to_string(),
+            input_list: input_list,
+            model_list: model_list,
             pass: pass.to_string(),
             interval: interval,
             extension: extension_string.to_string(),
             feature_list: feature_list,
+            filter: filter.to_string(),
             md_database: md_database.to_string(),
         })
     }
     fn upload_model(&self) -> Result<(), Error> {
         if !self.md_database.is_empty() {
-            let mut md_conn = duckdb_open("md:", 2);
+            let md_conn = duckdb_open("md:", 2);
 
             // upload the model to motherduck
             let sql_command = format!(
                 "CREATE OR REPLACE DATABASE {} FROM '{}';",
-                self.md_database, self.model,
+                self.md_database, self.model_list[0],
             );
 
             md_conn.execute_batch(&sql_command).map_err(|e| {
@@ -124,11 +129,13 @@ impl FileProcessor for ModelProcessor {
     fn get_command(&self) -> &String {
         &self.command
     }
-    fn get_input(&self) -> &String {
-        &self.input
+    fn get_input(&self, input_list: &mut Vec<String>) -> Result<(), Error> {
+        *input_list = self.input_list.clone();
+        Ok(())
     }
-    fn get_output(&self) -> &String {
-        &self.model
+    fn get_output(&self, output_list: &mut Vec<String>) -> Result<(), Error> {
+        *output_list = self.model_list.clone();
+        Ok(())
     }
     fn get_pass(&self) -> &String {
         &self.pass
@@ -151,10 +158,10 @@ impl FileProcessor for ModelProcessor {
     fn process(&mut self, file_list: &Vec<String>) -> Result<(), Error> {
         // check if the model file exists, if so, the age
         // is checked to determine if a new model should be built
-        if Path::new(&self.model).exists() {
+        if Path::new(&self.model_list[0]).exists() {
             if self.interval != Interval::ONCE {
                 // check if the current model is a day old, if so build a new one
-                let meta = fs::metadata(&self.model).map_err(|e| {
+                let meta = fs::metadata(&self.model_list[0]).map_err(|e| {
                     Error::new(
                         std::io::ErrorKind::Other,
                         format!("failed to get metadata: {}", e),
@@ -173,11 +180,11 @@ impl FileProcessor for ModelProcessor {
                 }
                 println!(
                     "{}: overwriting existing model file: {}",
-                    self.command, self.model
+                    self.command, self.model_list[0]
                 );
             }
         }
-        let tmp_output = format!("{}.tmp", self.model);
+        let tmp_output = format!("{}.tmp", self.model_list[0]);
         let mut db_conn = duckdb_open(&tmp_output, 2);
         let mut parquet_conn = duckdb_open_memory(2);
 
@@ -267,8 +274,9 @@ impl FileProcessor for ModelProcessor {
                 medium: 0.0,
                 high: 0.0,
                 severe: 0.0,
+                filter: "".to_string(),
             };
-            let _ = model.build(&parquet_conn, &self.feature_list);
+            let _ = model.build(&parquet_conn, &self.feature_list, &self.filter);
             distinct_models.insert(distinct_key, model);
         }
 
@@ -293,19 +301,19 @@ impl FileProcessor for ModelProcessor {
         let _ = db_conn.close();
         let _ = parquet_conn.close();
 
-        if Path::new(&self.model).exists() {
+        if Path::new(&self.model_list[0]).exists() {
             // backup the old model file
             let current_utc: DateTime<Utc> = Utc::now();
             let rfc3339_name: String = current_utc.to_rfc3339();
-            let backup_file = format!("{}.{}", self.model, rfc3339_name.replace(":", "-"));
-            fs::rename(&self.model, &backup_file).map_err(|e| {
+            let backup_file = format!("{}.{}", self.model_list[0], rfc3339_name.replace(":", "-"));
+            fs::rename(&self.model_list[0], &backup_file).map_err(|e| {
                 Error::new(
                     std::io::ErrorKind::Other,
                     format!("failed to rename backup model: {}", e),
                 )
             })?;
         }
-        fs::rename(&tmp_output, &self.model).map_err(|e| {
+        fs::rename(&tmp_output, &self.model_list[0]).map_err(|e| {
             Error::new(
                 std::io::ErrorKind::Other,
                 format!("failed to rename model: {}", e),

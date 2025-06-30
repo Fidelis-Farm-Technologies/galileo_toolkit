@@ -1,9 +1,5 @@
 #!/bin/bash
 
-if [ ! -z "${GNAT_INPUT_DIR}" ] && [ ! -d "${GNAT_INPUT_DIR}" ]; then
-    mkdir ${GNAT_INPUT_DIR}
-fi
-
 if [ ! -z "${GNAT_OUTPUT_DIR}" ] && [ ! -d "${GNAT_OUTPUT_DIR}" ]; then
     mkdir ${GNAT_OUTPUT_DIR}
 fi

@@ -12,21 +12,20 @@ use crate::pipeline::load_environment;
 use crate::pipeline::parse_interval;
 use crate::pipeline::parse_options;
 use crate::pipeline::FileProcessor;
-use crate::pipeline::FileType;
+
 use crate::pipeline::Interval;
 use crate::pipeline::StreamType;
-use crate::utils::duckdb::{duckdb_open, duckdb_open_memory, duckdb_open_readonly};
-use chrono::{DateTime, TimeZone, Utc};
-use duckdb::Connection;
-use std::time::SystemTime;
+use crate::utils::duckdb::duckdb_open_memory;
+use chrono::{DateTime, Utc};
+
 
 use std::fs;
 use std::io::Error;
 
 pub struct SampleProcessor {
     pub command: String,
-    pub input: String,
-    pub output: String,
+    pub input_list: Vec<String>,
+    pub output_list: Vec<String>,
     pub pass: String,
     pub interval: Interval,
     pub extension: String,
@@ -66,10 +65,14 @@ impl SampleProcessor {
             .parse::<u8>()
             .unwrap();
 
+        let mut input_list = Vec::<String>::new();
+        input_list.push(input.to_string());
+        let mut output_list = Vec::<String>::new();
+        output_list.push(output.to_string());
         Ok(Self {
             command: command.to_string(),
-            input: input.to_string(),
-            output: output.to_string(),
+            input_list: input_list,
+            output_list: output_list,
             pass: pass.to_string(),
             interval: interval,
             extension: extension_string.to_string(),
@@ -87,11 +90,11 @@ impl SampleProcessor {
             self.command,
             rfc3339_name.replace(":", "-")
         );
-        let tmp_filename = format!("{}/.{}", self.output, new_filename);
-        let final_filename = format!("{}/{}.parquet", self.output, new_filename);
+        let tmp_filename = format!("{}/.{}", self.output_list[0], new_filename);
+        let final_filename = format!("{}/{}.parquet", self.output_list[0], new_filename);
 
         let mut file_list: Vec<String> = Vec::new();
-        for entry in fs::read_dir(&self.output)
+        for entry in fs::read_dir(&self.output_list[0])
             .map_err(|e| Error::new(std::io::ErrorKind::Other, format!("read_dir error: {}", e)))?
         {
             let file = entry.map_err(|e| {
@@ -102,7 +105,7 @@ impl SampleProcessor {
             })?;
             let file_name = file.file_name().to_string_lossy().to_string();
             if !file_name.starts_with('.') && file_name.ends_with(".parquet") {
-                file_list.push(format!("{}/{}", self.output, file_name));
+                file_list.push(format!("{}/{}", self.output_list[0], file_name));
             }
         }
 
@@ -217,8 +220,8 @@ impl SampleProcessor {
                 record.proto,
                 rfc3339_name.replace(":", "-")
             );
-            let tmp_filename = format!("{}/.{}", self.output, new_filename);
-            let final_filename = format!("{}/{}.parquet", self.output, new_filename);
+            let tmp_filename = format!("{}/.{}", self.output_list[0], new_filename);
+            let final_filename = format!("{}/{}.parquet", self.output_list[0], new_filename);
             let sql_command = format!(
                 "COPY (SELECT * FROM read_parquet({})
                  WHERE observe='{}' 
@@ -244,11 +247,13 @@ impl FileProcessor for SampleProcessor {
     fn get_command(&self) -> &String {
         &self.command
     }
-    fn get_input(&self) -> &String {
-        &self.input
+    fn get_input(&self, input_list: &mut Vec<String>) -> Result<(), Error> {
+        *input_list = self.input_list.clone();
+        Ok(())
     }
-    fn get_output(&self) -> &String {
-        &self.output
+    fn get_output(&self, output_list: &mut Vec<String>) -> Result<(), Error> {
+        *output_list = self.output_list.clone();
+        Ok(())
     }
     fn get_pass(&self) -> &String {
         &self.pass

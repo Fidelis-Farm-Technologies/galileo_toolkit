@@ -7,7 +7,7 @@
  */
 
 use clap::Parser;
-use gnat::pipeline::stream::StreamProcess;
+use gnat::pipeline::split::SplitProcessor;
 use gnat::pipeline::FileProcessor;
 use std::error::Error;
 
@@ -33,8 +33,8 @@ struct Args {
 fn main() -> Result<(), Box<dyn Error>> {
     let args = Args::parse();
 
-    let mut split_processor = StreamProcess::new(
-        "stream",
+    let mut split_processor = SplitProcessor::new(
+        "split",
         &args.input,
         &args.output,
         &args.pass.clone().unwrap_or(String::new()),

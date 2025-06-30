@@ -11,17 +11,14 @@ use crate::pipeline::parse_interval;
 use crate::pipeline::parse_options;
 use crate::pipeline::use_motherduck;
 use crate::pipeline::FileProcessor;
-use crate::pipeline::FileType;
 use crate::pipeline::Interval;
 use crate::pipeline::StreamType;
-use crate::utils::duckdb::{duckdb_open, duckdb_open_memory, duckdb_open_readonly};
+use crate::utils::duckdb::{duckdb_open, duckdb_open_memory};
 use chrono::prelude::*;
 use chrono::{TimeZone, Utc};
-use duckdb::{Appender, Connection, DropBehavior};
+use duckdb::{Connection, DropBehavior};
 use std::fs;
 use std::io::Error;
-use std::process;
-use std::time::SystemTime;
 
 use crate::model::table::appid::AppIdTable;
 use crate::model::table::asn::AsnTable;
@@ -47,8 +44,8 @@ pub struct BucketRecord {
 
 pub struct AggregationProcessor {
     pub command: String,
-    pub input: String,
-    pub output: String,
+    pub input_list: Vec<String>,
+    pub output_list: Vec<String>,
     pub pass: String,
     pub interval: Interval,
     pub extension: String,
@@ -161,10 +158,14 @@ impl AggregationProcessor {
         table_list.push(Box::new(vlan));
         table_list.push(Box::new(vpn));
 
+        let mut input_list = Vec::<String>::new();
+        input_list.push(input.to_string());
+        let mut output_list = Vec::<String>::new();
+        output_list.push(output.to_string());
         Ok(Self {
             command: command.to_string(),
-            input: input.to_string(),
-            output: output.to_string(),
+            input_list: input_list,
+            output_list: output_list,
             pass: pass.to_string(),
             interval: interval,
             extension: extension_string.to_string(),
@@ -182,11 +183,14 @@ impl FileProcessor for AggregationProcessor {
     fn get_command(&self) -> &String {
         &self.command
     }
-    fn get_input(&self) -> &String {
-        &self.input
+
+    fn get_input(&self, input_list: &mut Vec<String>) -> Result<(), Error> {
+        *input_list = self.input_list.clone();
+        Ok(())
     }
-    fn get_output(&self) -> &String {
-        &self.output
+    fn get_output(&self, output_list: &mut Vec<String>) -> Result<(), Error> {
+        *output_list = self.output_list.clone();
+        Ok(())
     }
     fn get_pass(&self) -> &String {
         &self.pass
@@ -241,7 +245,7 @@ impl FileProcessor for AggregationProcessor {
                 table.insert(&mem_source, &mut cache_appender);
             }
             let _ = cache_appender.flush();
-            let tmp_parquet = ".gnat_metrics.parquet";
+            let tmp_parquet = format!("{}/.gnat_metrics.parquet", self.output_list[0]);
             let sql_copy = format!(
                 "COPY metrics TO '{}' (FORMAT parquet, COMPRESSION zstd);",
                 tmp_parquet
@@ -299,7 +303,7 @@ impl FileProcessor for AggregationProcessor {
             let sql_command = format!("COPY (SELECT *, year(bucket) AS year, month(bucket) AS month, day(bucket) AS day FROM metrics)
                    TO '{}' 
                    (FORMAT parquet, COMPRESSION zstd, ROW_GROUP_SIZE 100_000, PARTITION_BY (year, month, day), 
-                   OVERWRITE_OR_IGNORE,FILENAME_PATTERN 'gnat-{}-{}.{{i}}');", self.output, self.command, self.dtg_format);
+                   OVERWRITE_OR_IGNORE,FILENAME_PATTERN 'gnat-{}-{}.{{i}}');", self.output_list[0], self.command, self.dtg_format);
 
             self.db_conn.execute_batch(&sql_command).map_err(|e| {
                 Error::new(std::io::ErrorKind::Other, format!("DuckDB error: {}", e))

@@ -18,24 +18,20 @@ use std::collections::HashMap;
 pub struct StringCategoryHistogram {
     name: String,
     count: usize,
+    filter: String,
     map: HashMap<String, i64>,
 }
 
 impl StringCategoryHistogram {
-    pub fn new(name: &String) -> StringCategoryHistogram {
+    pub fn new(name: &String, filter: &str) -> StringCategoryHistogram {
         StringCategoryHistogram {
             name: name.to_string(),
             count: 0,
+            filter: filter.to_string(),
             map: HashMap::new(),
         }
     }
-    fn serialize_summary(
-        &self,
-        appender: &mut Appender,
-        observe: &String,
-        vlan: i64,
-        proto: &String,
-    ) {
+    fn serialize_summary(&self, appender: &mut Appender, observe: &str, vlan: i64, proto: &str) {
         appender
             .append_row(params![
                 observe,
@@ -45,17 +41,12 @@ impl StringCategoryHistogram {
                 "string_category",
                 self.count,
                 0,
-                0
+                0,
+                self.filter
             ])
             .unwrap();
     }
-    fn serialize_histogram(
-        &self,
-        appender: &mut Appender,
-        observe: &String,
-        vlan: i64,
-        proto: &String,
-    ) {
+    fn serialize_histogram(&self, appender: &mut Appender, observe: &str, vlan: i64, proto: &str) {
         println!(
             "{}: serializing [{}/{}/{}/{}]...",
             self.name, observe, vlan, proto, self.name
@@ -67,36 +58,42 @@ impl StringCategoryHistogram {
                 .unwrap();
         }
     }
-    fn add(&mut self, key: &String) {
+    fn add(&mut self, key: &str) {
         let value = self.map.entry(key.to_string()).or_insert(0);
         *value += 1;
         self.count += 1;
     }
-    pub fn probability(&self, key: &String) -> f64 {
+    pub fn probability(&self, key: &str) -> f64 {
         if let Some(frequency) = self.map.get(key) {
             return (*frequency + 1) as f64 / (self.count as f64 + 1.0);
         }
         1.0 / (self.count as f64 + 1.0)
     }
 
-    pub fn build(&mut self, db: &Connection, observe: &String, vlan: i64, proto: &String) -> Result<(), duckdb::Error> {
+    pub fn build(
+        &mut self,
+        db: &Connection,
+        observe: &str,
+        vlan: i64,
+        proto: &str,
+    ) -> Result<(), duckdb::Error> {
         let sql_command = format!(
-            "SELECT {} FROM flow WHERE observe='{}' AND dvlan = {} AND proto='{}';",
-            self.name, observe, vlan, proto,
+            "SELECT {} FROM flow WHERE observe='{}' AND dvlan = {} AND proto='{}' AND {};",
+            self.name, observe, vlan, proto, self.filter
         );
         let mut stmt = db.prepare(&sql_command)?;
 
-        let record_iter = stmt
-            .query_map([], |row| {
-                Ok(StringCategoryRecord {
-                    value: row.get(0).expect("missing value"),
-                })
-            })?;
+        let record_iter = stmt.query_map([], |row| {
+            Ok(StringCategoryRecord {
+                value: row.get(0).expect("missing value"),
+            })
+        })?;
 
         if self.name == "appid" {
             for record in record_iter {
                 let record = record?;
-                if record.value != "unknown" { // unknown is not a valid category
+                if record.value != "unknown" {
+                    // unknown is not a valid category
                     self.add(&record.value);
                 }
             }
@@ -108,7 +105,7 @@ impl StringCategoryHistogram {
         }
         Ok(())
     }
-    pub fn serialize(&self, conn: &mut Connection, observe: &String, vlan: i64, proto: &String) {
+    pub fn serialize(&self, conn: &mut Connection, observe: &str, vlan: i64, proto: &str) {
         conn.execute_batch(HISTOGRAM_SUMMARY).unwrap();
         conn.execute_batch(HISTOGRAM_STRING_CATEGORY).unwrap();
 
@@ -122,10 +119,10 @@ impl StringCategoryHistogram {
 
     pub fn load(
         db: &Connection,
-        name: &String,
-        observe: &String,
+        name: &str,
+        observe: &str,
         vlan: i64,
-        proto: &String,
+        proto: &str,
     ) -> StringCategoryHistogram {
         let sql_command = format!(
             "SELECT * FROM histogram_summary WHERE observe='{}' AND vlan = {} AND proto='{}' AND name='{}';",
@@ -144,6 +141,7 @@ impl StringCategoryHistogram {
                     count: row.get(5).expect("missing max"),
                     hash_size: row.get(6).expect("missing hash_size"),
                     bin_count: row.get(7).expect("missing bin_count"),
+                    filter: row.get(8).expect("missing filter"),
                 })
             })
             .unwrap();
@@ -152,6 +150,7 @@ impl StringCategoryHistogram {
         let mut histogram_category = StringCategoryHistogram {
             name: summary.name,
             count: summary.count,
+            filter: summary.filter,
             map,
         };
 

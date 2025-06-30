@@ -15,7 +15,7 @@ pub mod ssh;
 pub mod vlan;
 pub mod vpn;
 
-use duckdb::types::Value;
+//use duckdb::types::Value;
 
 #[derive(Debug)]
 pub struct FeatureSummaryRecord {
@@ -63,6 +63,7 @@ pub struct HbosSummaryRecord {
     pub medium: f64,
     pub high: f64,
     pub severe: f64,
+    pub filter: String,
 }
 
 #[derive(Debug)]
@@ -159,6 +160,7 @@ pub struct HistogramSummaryTable {
     pub count: usize,
     pub hash_size: u64,
     pub bin_count: usize,
+    pub filter: String,
 }
 
 #[derive(Debug)]
@@ -313,7 +315,7 @@ pub struct MemFlowRecord {
     pub orient: String,
     //pub tag: Vec<String>,
     pub hbos_score: f64,
-    pub hbos_severity: u8,    
+    pub hbos_severity: u8,
     //pub hbos_map: Vec<(String, f64)>,
     pub appid: String,
     pub category: String,

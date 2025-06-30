@@ -23,26 +23,22 @@ pub struct IpAddrCategoryHistogram {
     name: String,
     hash_size: u64,
     count: usize,
+    filter: String,
     map: HashMap<u64, u64>,
 }
 
 impl IpAddrCategoryHistogram {
-    pub fn new(name: &String, hash_size: u64) -> IpAddrCategoryHistogram {
+    pub fn new(name: &str, hash_size: u64, filter: &str) -> IpAddrCategoryHistogram {
         IpAddrCategoryHistogram {
             name: name.to_string(),
             hash_size,
             count: 0,
+            filter: filter.to_string(),
             map: HashMap::new(),
         }
     }
 
-    fn serialize_summary(
-        &self,
-        appender: &mut Appender,
-        observe: &String,
-        vlan: i64,
-        proto: &String,
-    ) {
+    fn serialize_summary(&self, appender: &mut Appender, observe: &str, vlan: i64, proto: &str) {
         appender
             .append_row(params![
                 observe,
@@ -53,16 +49,11 @@ impl IpAddrCategoryHistogram {
                 self.count,
                 self.hash_size,
                 0,
+                self.filter
             ])
             .unwrap();
     }
-    fn serialize_histogram(
-        &self,
-        appender: &mut Appender,
-        observe: &String,
-        vlan: i64,
-        proto: &String,
-    ) {
+    fn serialize_histogram(&self, appender: &mut Appender, observe: &str, vlan: i64, proto: &str) {
         println!(
             "HBOS: serializing [{}/{}/{}/{}]...",
             observe, vlan, proto, self.name
@@ -130,26 +121,31 @@ impl IpAddrCategoryHistogram {
         *value += 1;
         self.count += 1;
     }
-    pub fn probability(&mut self, ipaddr: &String) -> f64{        
+    pub fn probability(&mut self, ipaddr: &String) -> f64 {
         let key = self.get_key(ipaddr);
         if let Some(frequency) = self.map.get(&key) {
             return (*frequency + 1) as f64 / (self.count as f64 + 1.0);
         }
         1.0 / (self.count as f64 + 1.0)
     }
-    pub fn build(&mut self, db: &Connection, observe: &String, vlan: i64, proto: &String) -> Result<(), duckdb::Error> {
+    pub fn build(
+        &mut self,
+        db: &Connection,
+        observe: &str,
+        vlan: i64,
+        proto: &str,
+    ) -> Result<(), duckdb::Error> {
         let sql_command = format!(
-            "SELECT {} FROM flow WHERE observe='{}' AND dvlan = {} AND proto='{}';",
-            self.name, observe, vlan, proto
+            "SELECT {} FROM flow WHERE observe='{}' AND dvlan = {} AND proto='{}' AND {};",
+            self.name, observe, vlan, proto, self.filter
         );
         let mut stmt = db.prepare(&sql_command)?;
 
-        let record_iter = stmt
-            .query_map([], |row| {
-                Ok(IpAddrCategoryRecord {
-                    value: row.get(0).expect("missing value"),
-                })
-            })?;
+        let record_iter = stmt.query_map([], |row| {
+            Ok(IpAddrCategoryRecord {
+                value: row.get(0).expect("missing value"),
+            })
+        })?;
 
         for record in record_iter {
             let record = record?;
@@ -157,7 +153,7 @@ impl IpAddrCategoryHistogram {
         }
         Ok(())
     }
-    pub fn serialize(&self, conn: &mut Connection, observe: &String, vlan: i64, proto: &String) {
+    pub fn serialize(&self, conn: &mut Connection, observe: &str, vlan: i64, proto: &str) {
         conn.execute_batch(HISTOGRAM_SUMMARY).unwrap();
         conn.execute_batch(HISTOGRAM_IPADDR_CATEGORY).unwrap();
 
@@ -170,10 +166,10 @@ impl IpAddrCategoryHistogram {
     }
     pub fn load(
         db: &Connection,
-        name: &String,
-        observe: &String,
+        name: &str,
+        observe: &str,
         vlan: i64,
-        proto: &String,
+        proto: &str,
     ) -> IpAddrCategoryHistogram {
         let sql_command = format!(
             "SELECT * FROM histogram_summary WHERE observe='{}' AND vlan = {} AND proto='{}' AND name='{}';",
@@ -192,6 +188,7 @@ impl IpAddrCategoryHistogram {
                     count: row.get(5).expect("missing max"),
                     hash_size: row.get(6).expect("missing hash_size"),
                     bin_count: row.get(7).expect("missing bin_count"),
+                    filter: row.get(8).expect("missing filter"),
                 })
             })
             .unwrap();
@@ -203,6 +200,7 @@ impl IpAddrCategoryHistogram {
             name: summary.name,
             hash_size: summary.hash_size,
             count: summary.count,
+            filter: summary.filter,
             map,
         };
 

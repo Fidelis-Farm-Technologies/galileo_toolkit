@@ -17,29 +17,23 @@ use crate::model::table::DistinctObservation;
 use crate::model::table::HbosSummaryRecord;
 use crate::pipeline::load_environment;
 use crate::pipeline::StreamType;
-use crate::utils::duckdb::{duckdb_open, duckdb_open_memory, duckdb_open_readonly};
-use chrono::{DateTime, TimeZone, Utc};
-use duckdb::params;
-use duckdb::Appender;
-use duckdb::Connection;
-use duckdb::DropBehavior;
+use crate::utils::duckdb::{duckdb_open_memory, duckdb_open_readonly};
+use chrono::{DateTime, Utc};
 use std::collections::HashMap;
 use std::fs;
 use std::io::Error;
 use std::path::Path;
-use std::time::SystemTime;
 use std::time::UNIX_EPOCH;
 
 use crate::pipeline::parse_interval;
 use crate::pipeline::parse_options;
 use crate::pipeline::FileProcessor;
-use crate::pipeline::FileType;
 use crate::pipeline::Interval;
 
 pub struct HbosProcessor {
     pub command: String,
-    pub input: String,
-    pub output: String,
+    pub input_list: Vec<String>,
+    pub output_list: Vec<String>,
     pub pass: String,
     pub interval: Interval,
     pub extension: String,
@@ -61,7 +55,7 @@ impl HbosProcessor {
     ) -> Result<Self, Error> {
         let _ = load_environment();
         let interval = parse_interval(interval_string);
-        let mut options = parse_options(options_string);
+        let options = parse_options(options_string);
 
         for (key, value) in &options {
             if !value.is_empty() {
@@ -76,10 +70,14 @@ impl HbosProcessor {
 
         let mtime = HbosProcessor::file_modified_time_in_seconds(&model_file);
 
+        let mut input_list = Vec::<String>::new();
+        input_list.push(input.to_string());
+        let mut output_list = Vec::<String>::new();
+        output_list.push(output.to_string());
         Ok(Self {
             command: command.to_string(),
-            input: input.to_string(),
-            output: output.to_string(),
+            input_list: input_list,
+            output_list: output_list,
             pass: pass.to_string(),
             interval,
             extension: extension_string.to_string(),
@@ -158,6 +156,7 @@ impl HbosProcessor {
                         medium: row.get(12).expect("quantile value"),
                         high: row.get(13).expect("quantile value"),
                         severe: row.get(14).expect("quantile value"),
+                        filter: row.get(15).expect("missing filter"),
                     })
                 })
                 .expect("query row");
@@ -172,7 +171,7 @@ impl HbosProcessor {
         Ok(())
     }
 
-    fn load_model(&mut self) -> Result<(), Error> {
+    fn load_hbos_model(&mut self) -> Result<(), Error> {
         if !Path::new(&self.model_spec).exists() {
             let error_msg = format!(
                 "{}: model file {} does not exist",
@@ -224,6 +223,7 @@ impl HbosProcessor {
                 medium: 0.0,
                 high: 0.0,
                 severe: 0.0,
+                filter: "".to_string(),
             };
 
             let _ = model.deserialize(&mut model_conn);
@@ -234,7 +234,7 @@ impl HbosProcessor {
 
         Ok(())
     }
-    fn load_if_not_already(&mut self) -> Result<(), Error> {
+    fn load_model(&mut self) -> Result<(), Error> {
         if self.hbos_summary_map.len() == 0 {
             match self.load_hbos_summary() {
                 Ok(_) => println!("{}: loaded trigger table schema", self.command),
@@ -242,7 +242,7 @@ impl HbosProcessor {
             }
         }
         if self.histogram_map.len() == 0 {
-            match self.load_model() {
+            match self.load_hbos_model() {
                 Ok(_) => println!("{}: loaded model", self.command),
                 Err(e) => return Err(e),
             }
@@ -254,11 +254,13 @@ impl FileProcessor for HbosProcessor {
     fn get_command(&self) -> &String {
         &self.command
     }
-    fn get_input(&self) -> &String {
-        &self.input
+    fn get_input(&self, input_list: &mut Vec<String>) -> Result<(), Error> {
+        *input_list = self.input_list.clone();
+        Ok(())
     }
-    fn get_output(&self) -> &String {
-        &self.output
+    fn get_output(&self, output_list: &mut Vec<String>) -> Result<(), Error> {
+        *output_list = self.output_list.clone();
+        Ok(())
     }
     fn get_pass(&self) -> &String {
         &self.pass
@@ -279,25 +281,34 @@ impl FileProcessor for HbosProcessor {
         true
     }
     fn process(&mut self, file_list: &Vec<String>) -> Result<(), Error> {
-        if self.load_if_not_already().is_err() {
-            // unable to load model or hbos summary
-            return Ok(());
-        };
-
         // Use iterator and join for file list formatting
         let parquet_list = file_list
             .iter()
             .map(|file| format!("'{}'", file))
             .collect::<Vec<_>>()
             .join(",");
+
         let parquet_list = format!("[{}]", parquet_list);
+        if let Err(_e) = self.load_model() {
+            // If loading the model fails,
+            // it is because the model db does not exit,
+            // therefore, just forward the data
+            let _ = self.forward(parquet_list, &self.output_list.clone());
+            return Ok(());
+        }
 
         let current_utc: DateTime<Utc> = Utc::now();
         let rfc3339_name: String = current_utc.to_rfc3339();
         // Sanitize rfc3339_name for filesystem safety
         let safe_rfc3339 = rfc3339_name.replace(":", "-");
-        let tmp_filename = format!(".gnat_{}-{}.parquet", self.command, safe_rfc3339);
-        let final_filename = format!("{}/{}", self.output, tmp_filename.trim_start_matches('.'));
+        let tmp_filename = format!(
+            "{}/.gnat_{}-{}.parquet",
+            self.output_list[0], self.command, safe_rfc3339
+        );
+        let final_filename = format!(
+            "{}/gnat_{}-{}.parquet",
+            self.output_list[0], self.command, safe_rfc3339
+        );
 
         let mut db_out = duckdb_open_memory(2);
         {

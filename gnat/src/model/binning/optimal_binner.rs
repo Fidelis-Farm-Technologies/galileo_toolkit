@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+
 use std::fmt::Debug;
 
 /// Trait for numeric types that can be binned

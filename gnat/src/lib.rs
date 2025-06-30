@@ -22,11 +22,11 @@ pub mod model {
 
 pub mod pipeline {
     use crate::utils::duckdb::duckdb_open_memory;
+    use chrono::DateTime;
     use chrono::Datelike;
     use chrono::Timelike;
     use chrono::Utc;
     use dotenv::dotenv;
-    use duckdb::Connection;
     use std::collections::HashMap;
     use std::env;
     use std::env::VarError;
@@ -47,8 +47,8 @@ pub mod pipeline {
     pub mod model;
     pub mod rule;
     pub mod sample;
+    pub mod split;
     pub mod store;
-    pub mod stream;
     pub mod tag;
 
     static FIELDS: &'static [&'static str] = &[
@@ -121,10 +121,11 @@ pub mod pipeline {
 
     #[derive(Debug, Clone, PartialEq)]
     pub enum StreamType {
+        IPFIX = 10,
         LEGACY = 3,
-        IPFIX = 100,
-        TELEMETRY = 200,
-        ADHOC = 999,
+        FLOW = 100,
+        TELEMETRY = 300,
+        ADHOC = 900,
     }
 
     #[derive(Debug, Clone, PartialEq)]
@@ -222,70 +223,58 @@ pub mod pipeline {
         }
     }
 
-    fn check_current_schema(file: &String) -> Result<bool, Error> {
-        if file.ends_with(".yaf") {
-            return Ok(true);
-        }
-        let db_conn = duckdb_open_memory(1);
-
-        let sql_exists_command = format!(
-            "SELECT EXISTS(SELECT 1 FROM parquet_schema('{}') WHERE name = 'stream')",
-            file
-        );
-        let mut stmt = db_conn.prepare(&sql_exists_command).expect("sql prepare");
-        let exists = stmt
-            .query_row([], |row| Ok(row.get::<_, bool>(0).expect("missing stream")))
-            .expect("missing stream");
-
-        Ok(exists)
-    }
-
-    fn update_legacy_schema(file: &String) -> Result<(), Error> {
-        if file.ends_with(".yaf") {
+    fn check_and_update_schema(file_list: &Vec<String>) -> Result<(), Error> {
+        if file_list[0].ends_with(".yaf") {
             return Ok(());
         }
-        let db_conn = duckdb_open_memory(1);
 
+        let db_conn = duckdb_open_memory(1);
         let sql_exists_command = format!(
             "SELECT EXISTS(SELECT 1 FROM parquet_schema('{}') WHERE name = 'stream')",
-            file
+            file_list[0]
         );
         let mut stmt = db_conn.prepare(&sql_exists_command).expect("sql prepare");
-        let exists = stmt
+        let is_current_schema = stmt
             .query_row([], |row| Ok(row.get::<_, bool>(0).expect("missing stream")))
             .expect("missing stream");
-        if !exists {
-            let tmp_file = format!(".{}", file);
-            let sql_get_stream = format!(
-                "CREATE OR REPLACE TABLE flow AS SELECT * FROM '{}';
-                ALTER TABLE flow RENAME version TO stream;
-                UPDATE flow SET stream = 100;
-                COPY flow TO '{}' (FORMAT parquet);",
-                file, tmp_file
-            );
-            fs::remove_file(file).expect("failed to remove old file");
-            fs::rename(tmp_file.as_str(), file.as_str()).expect("failed to rename new file");
+
+        if !is_current_schema {
+            for file in file_list {
+                let tmp_file = format!("{}.updated", file);
+                let sql_get_stream = format!(
+                    "CREATE OR REPLACE TABLE flow AS SELECT * FROM '{}'; 
+                     ALTER TABLE flow RENAME version TO stream;
+                     UPDATE flow SET stream = 100;
+                     COPY flow TO '{}' (FORMAT parquet);",
+                    file, tmp_file
+                );
+
+                db_conn.execute_batch(&sql_get_stream).map_err(|e| {
+                    Error::new(std::io::ErrorKind::Other, format!("DuckDB error: {}", e))
+                })?;
+
+                fs::remove_file(file).expect("failed to remove old file");
+                fs::rename(tmp_file.as_str(), file.as_str()).expect("failed to rename new file");
+            }
         }
         Ok(())
     }
 
-    fn get_stream_type(file: &String) -> Result<u32, Error> {
+    fn get_stream_class(file: &String) -> Result<u32, Error> {
         if file.ends_with(".yaf") {
             return Ok(StreamType::IPFIX as u32);
         } else if file.ends_with(".parquet") {
             let db_conn = duckdb_open_memory(1);
-            let sql_get_stream = format!(
-                "SELECT DISTINCT stream FROM read_parquet('{}') LIMIT 1;",
-                file
-            );
+            let sql_get_stream = format!("SELECT stream FROM read_parquet('{}') LIMIT 1;", file);
             let mut stmt = db_conn.prepare(&sql_get_stream).expect("sql prepare");
-            let stream = stmt
-                .query_row([], |row| Ok(row.get::<_, u32>(0).expect("missing stream")))
-                .expect("query row");
-            return Ok(stream);
-        } else {
-            return Err(Error::other("unsupported file type"));
+            let stream_class = stmt
+                .query_row([], |row| {
+                    Ok(row.get::<_, u32>(0).expect("missing stream_class"))
+                })
+                .expect("missing stream_class");
+            return Ok(stream_class as u32);
         }
+        return Err(Error::other("unsupported file type"));
     }
     pub fn load_environment() -> Result<(), VarError> {
         dotenv().ok();
@@ -305,8 +294,8 @@ pub mod pipeline {
         fn process(&mut self, file_list: &Vec<String>) -> Result<(), Error>;
         fn socket(&mut self) -> Result<(), Error>;
         fn get_command(&self) -> &String;
-        fn get_input(&self) -> &String;
-        fn get_output(&self) -> &String;
+        fn get_input(&self, input_list: &mut Vec<String>) -> Result<(), Error>;
+        fn get_output(&self, output_list: &mut Vec<String>) -> Result<(), Error>;
         fn get_stream_id(&self) -> u32;
         fn get_pass(&self) -> &String;
         fn get_file_extension(&self) -> &String;
@@ -316,18 +305,146 @@ pub mod pipeline {
         fn listen(&mut self) -> Result<(), Error> {
             self.socket()
         }
+        fn forward(
+            &mut self,
+            parquet_list: String,
+            output_list: &Vec<String>,
+        ) -> Result<(), Error> {
+            let current_utc: DateTime<Utc> = Utc::now();
+            let rfc3339_name: String = current_utc.to_rfc3339();
+            // Sanitize rfc3339_name for filesystem safety
+            let safe_rfc3339 = rfc3339_name.replace(":", "-");
 
-        fn run(&mut self) -> Result<(), Error> {
+            let db_out = duckdb_open_memory(2);
+            for output in output_list {
+                let tmp_filename = format!(
+                    "{}/.gnat-{}-{}.parquet",
+                    output,
+                    self.get_command(),
+                    safe_rfc3339
+                );
+                let final_filename = format!(
+                    "{}/gnat-{}-{}.parquet",
+                    output,
+                    self.get_command(),
+                    safe_rfc3339
+                );
 
+                let sql_command = format!(
+                    "COPY (SELECT * FROM read_parquet({})) TO '{}' (FORMAT 'parquet', CODEC 'snappy', ROW_GROUP_SIZE 100_000);",
+                    parquet_list, tmp_filename
+                );
+                db_out.execute_batch(&sql_command).map_err(|e| {
+                    Error::new(std::io::ErrorKind::Other, format!("DuckDB error: {}", e))
+                })?;
+
+                fs::rename(&tmp_filename, &final_filename).map_err(|e| {
+                    Error::new(
+                        std::io::ErrorKind::Other,
+                        format!("File rename error: {}", e),
+                    )
+                })?;
+            }
+            let _ = db_out.close();
+            Ok(())
+        }
+        fn process_directory(
+            &mut self,
+            input: &str,
+            pass: &str,
+            file_extension: &str,
+        ) -> Result<usize, Error> {
             let command = self.get_command().clone();
-            let input = self.get_input();
-            let output = self.get_output();
+            let mut file_list: Vec<String> = Vec::new();
+            let mut pass_list: Vec<String> = Vec::new();
+            //println!("{}: processing directory {}", command, input);
+
+            for entry in fs::read_dir(input).expect("read_dir()") {
+                let file: fs::DirEntry = entry.unwrap();
+                let file_name = String::from(file.file_name().to_string_lossy());
+                if !file_name.starts_with(".") && file_name.ends_with(&file_extension) {
+                    // make sure yaf file is not locked
+                    let file_path = format!("{}/{}", input, file_name);
+
+                    if file_path.ends_with(".yaf") {
+                        if !Path::new(&format!("{}.lock", file_path)).exists() {
+                            file_list.push(file_path);
+                            if !pass.is_empty() {
+                                let pass_path = format!("{}/{}", pass, file_name);
+                                pass_list.push(pass_path);
+                            }
+                        }
+                    } else {
+                        file_list.push(file_path);
+                        if !pass.is_empty() {
+                            let pass_path = format!("{}/{}", pass, file_name);
+                            pass_list.push(pass_path);
+                        }
+                    }
+                }
+                // batch up to MAX_BATCH -- limit the number of files process at once
+                if file_list.len() >= MAX_BATCH {
+                    break;
+                }
+            }
+
+            if !file_list.is_empty() {
+                // make sure stream types are compatible
+                //
+
+                check_and_update_schema(&file_list).expect("failed to update legacy schema");
+
+                let stream_class =
+                    get_stream_class(&file_list[0]).expect("get stream class version");
+                if (stream_class == StreamType::IPFIX as u32 && command == "import")
+                    || stream_class == StreamType::FLOW as u32
+                {
+                    println!("{}: processing {} file(s) ...", command, file_list.len());
+                } else {
+                    eprintln!("{}: unsupported stream class: {}", command, stream_class);
+                    eprintln!("{}: check gnat pipeline configuration", command);
+                    std::process::exit(exitcode::CONFIG);
+                }
+                //
+                // process files
+                //
+                match self.process(&file_list) {
+                    Ok(_) => {}
+                    Err(error) => {
+                        eprintln!("{}: processing failed: {}", command, error);
+                        std::process::exit(exitcode::IOERR);
+                    }
+                }
+
+                //
+                // move files to pass or delete
+                //
+                for (index, file) in file_list.iter_mut().enumerate() {
+                    if pass_list.is_empty() {
+                        if self.delete_files() {
+                            fs::remove_file(file).expect("failed to remove file");
+                        }
+                    } else {
+                        fs::rename(&file, &pass_list[index]).expect("failed to rename file");
+                    }
+                }
+            }
+            Ok(file_list.len())
+        }
+        fn run(&mut self) -> Result<(), Error> {
+            let command = self.get_command().clone();
+
+            let mut input_list = Vec::new();
+            let mut output_list = Vec::new();
+            let _ = self.get_input(&mut input_list)?;
+            let _ = self.get_output(&mut output_list)?;
+
             let pass = self.get_pass().clone();
             let interval = self.get_interval().clone();
             let file_extension = self.get_file_extension().clone();
 
-            println!("{}: input spec: [{}]", command, input);
-            println!("{}: output spec: [{}]", command, output);
+            println!("{}: input spec: {:?}", command, input_list);
+            println!("{}: output spec: {:?}", command, output_list);
             if !pass.is_empty() {
                 println!("{}: pass spec: [{}]", command, pass);
             }
@@ -342,111 +459,49 @@ pub mod pipeline {
             //
             // verify the combination of arguments are valid
             //
-            if !Path::new(&input).is_dir() {
-                eprintln!("Commandline error: invalid --input {}", input);
-                std::process::exit(exitcode::CONFIG)
+            for input in input_list.iter() {
+                if !Path::new(&input).exists() {
+                    eprintln!(
+                        "Commandline error: input directory {} does not exist",
+                        input
+                    );
+                    std::process::exit(exitcode::CONFIG)
+                }
             }
-
+            for output in output_list.iter() {
+                if output.starts_with("md:") || output.starts_with("s3:") {
+                } else if !Path::new(&output).exists() {
+                    eprintln!(
+                        "commandline error: output directory {} does not exist",
+                        output
+                    );
+                    std::process::exit(exitcode::CONFIG)
+                }
+            }
             if !pass.is_empty() && !Path::new(&pass).is_dir() {
-                eprintln!("Commandline error: invalid --pass {}", pass);
+                eprintln!("commandline error: invalid --pass {}", pass);
                 std::process::exit(exitcode::CONFIG)
             }
 
-            let input_dir = Path::new(input.as_str());
-            env::set_current_dir(input_dir)?;
-            println!("{}: current working directory: {}.", command, input);
             println!("{}: starting up.", command);
 
             loop {
-                let mut more_to_process = false;
-                let mut file_list: Vec<String> = Vec::new();
-                for entry in fs::read_dir(".").expect("read_dir()") {
-                    let file: fs::DirEntry = entry.unwrap();
-                    let file_name = String::from(file.file_name().to_string_lossy());
-                    if !file_name.starts_with(".") && file_name.ends_with(&file_extension) {
-                        // make sure yaf file is not locked
-                        if file_name.ends_with(".yaf") {
-                            if !Path::new(&format!("{}.lock", file_name)).exists() {
-                                file_list.push(file_name);
-                            }
-                        } else {
-                            file_list.push(file_name);
-                        }
-                    }
-                    // batch up to MAX_BATCH -- limit the number of files process at once
-                    if file_list.len() >= MAX_BATCH {
-                        more_to_process = true;
-                        break;
-                    }
+                let start = Instant::now();
+                let mut total_files_processed = 0;
+                // process all input directories
+                for input in &input_list {
+                    total_files_processed += self
+                        .process_directory(&input, &pass, &file_extension)
+                        .expect("failed to process directory");
                 }
 
-                if !file_list.is_empty() {
-                    let start = Instant::now();
-                    //
-                    // make sure stream types are compatible
-                    //
-                    let is_current_schema = check_current_schema(&file_list[0])
-                        .expect("failed to check current schema");
-                    if !is_current_schema {
-                        for file in &file_list {
-                            // expense; but necessary
-                            println!("{}: updating legacy schema for file: {}", command, file);
-                            update_legacy_schema(file).expect("failed to update legacy schema");
-                        }
-                        println!("{}: processing {} file(s) ...", command, file_list.len());
-                    } else {
-                        let stream_id = self.get_stream_id();
-                        let stream_type =
-                            get_stream_type(&file_list[0]).expect("get schema version");
-
-                        if stream_id == StreamType::ADHOC as u32
-                            || stream_type == self.get_stream_id()
-                        {
-                            println!("{}: processing {} file(s) ...", command, file_list.len());
-                        } else {
-                            eprintln!(
-                                "{}: stream type mismatch: expected {}, got {}",
-                                command, stream_id, stream_type
-                            );
-                            std::process::exit(exitcode::CONFIG);
-                        }
+                if total_files_processed == 0 {
+                    if !sleep_interval(&interval) {
+                        println!("{}: shutting down.", command);
+                        return Ok(());
                     }
-                    //
-                    // process files
-                    //
-                    match self.process(&file_list) {
-                        Ok(_) => {}
-                        Err(error) => {
-                            eprintln!("{}: processing failed: {}", command, error);
-                            std::process::exit(exitcode::IOERR);
-                        }
-                    }
-                    println!("{}: elapsed time: {:?}", command, start.elapsed());
-
-                    //
-                    // move files to pass or delete
-                    //
-                    for file in file_list.iter_mut() {
-                        if pass.is_empty() {
-                            if self.delete_files() {
-                                fs::remove_file(file).expect("failed to remove file");
-                            }
-                        } else {
-                            let mut pass_file = format!("{}/{}", &pass, file);
-
-                            fs::rename(file.clone(), pass_file.clone())
-                                .expect("failed to rename file");
-                        }
-                    }
-
-                    if more_to_process {
-                        continue;
-                    }
-                }
-
-                if !sleep_interval(&interval) {
-                    println!("{}: shutting down.", command);
-                    return Ok(());
+                } else {
+                    println!("{}: elapsed time {:?}", command, start.elapsed());
                 }
             }
         }

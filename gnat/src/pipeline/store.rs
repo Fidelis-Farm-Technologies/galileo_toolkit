@@ -11,23 +11,15 @@ use crate::pipeline::load_environment;
 use crate::pipeline::use_motherduck;
 use crate::pipeline::StorageType;
 use crate::pipeline::StreamType;
-use crate::utils::duckdb::{duckdb_open, duckdb_open_memory, duckdb_open_readonly};
-use dotenv::dotenv;
+use crate::utils::duckdb::{duckdb_open, duckdb_open_memory};
 use duckdb::Connection;
 use std::env;
 
-use crate::model::table::MemFlowRecord;
-use chrono::{DateTime, TimeZone, Utc};
-
-use duckdb::{params, Appender, DropBehavior};
-use std::fs;
-use std::process;
 use std::time::SystemTime;
 
 use crate::pipeline::parse_interval;
 use crate::pipeline::parse_options;
 use crate::pipeline::FileProcessor;
-use crate::pipeline::FileType;
 use crate::pipeline::Interval;
 use std::io::Error;
 
@@ -41,8 +33,8 @@ struct DistinctDtg {
 
 pub struct StoreProcessor {
     pub command: String,
-    pub input: String,
-    pub output: String,
+    pub input_list: Vec<String>,
+    pub output_list: Vec<String>,
     pub pass: String,
     pub interval: Interval,
     pub extension: String,
@@ -62,7 +54,7 @@ impl StoreProcessor {
     ) -> Result<Self, Error> {
         let _ = load_environment();
         let interval = parse_interval(interval_string);
-        let mut options = parse_options(options_string);
+        let options = parse_options(options_string);
         let storage_type = Self::get_storage_type(output)?;
 
         for (key, value) in &options {
@@ -110,10 +102,14 @@ impl StoreProcessor {
             // For local storage, we can use an in-memory connection
             println!("{}: using local storage", command);
         }
+        let mut input_list = Vec::<String>::new();
+        input_list.push(input.to_string());
+        let mut output_list = Vec::<String>::new();
+        output_list.push(output.to_string());
         Ok(Self {
             command: command.to_string(),
-            input: input.to_string(),
-            output: output.to_string(),
+            input_list: input_list,
+            output_list: output_list,
             pass: pass.to_string(),
             interval: interval,
             extension: extension_string.to_string(),
@@ -217,7 +213,7 @@ impl StoreProcessor {
             println!(
                 "{}: uploading [{}/year={}/month={}/day={}/hour={}/{}{:02}{:02}{:02}]...",
                 self.command,
-                self.output,
+                self.output_list[0],
                 dtg.year,
                 dtg.month,
                 dtg.day,
@@ -235,7 +231,7 @@ impl StoreProcessor {
             //TO 's3://{}/{}/year={}/month={}/day={}/hour={}/{}{:02}{:02}{:02}-{}.parquet' (FORMAT 'parquet', CODEC 'zstd', ROW_GROUP_SIZE 100_000);", 
             parquet_list,
             dtg.year, dtg.month, dtg.day, dtg.hour,
-            self.output,
+            self.output_list[0],
             dtg.year, dtg.month, dtg.day, dtg.hour,
             dtg.year, dtg.month, dtg.day, dtg.hour, push_time.as_secs());
             //println!("S3_uploader: execute_batch {}", sql_s3_copy);
@@ -249,7 +245,7 @@ impl StoreProcessor {
     fn local_storage(&mut self, file_list: &Vec<String>) -> Result<(), Error> {
         println!(
             "{}: updating to local partitioned storage {}",
-            self.command, self.output
+            self.command, self.output_list[0]
         );
         // Use iterator and join for file list formatting
         let parquet_list = file_list
@@ -259,14 +255,11 @@ impl StoreProcessor {
             .join(",");
         let parquet_list = format!("[{}]", parquet_list);
 
-        let push_time = SystemTime::now()
-            .duration_since(SystemTime::UNIX_EPOCH)
-            .expect("now()");
 
         let sql_command = format!(
                 "COPY (SELECT *, year(stime) AS year, month(stime) AS month, day(stime) as day, hour(stime) as hour  FROM read_parquet({})) 
                  TO '{}' (FORMAT 'parquet', CODEC 'snappy', ROW_GROUP_SIZE 100_000, PARTITION_BY(year, month, day, hour), APPEND, FILENAME_PATTERN 'gnat-{{uuid}}');",
-                parquet_list, self.output
+                parquet_list, self.output_list[0]
             );
         self.db_conn
             .execute_batch(&sql_command)
@@ -279,11 +272,13 @@ impl FileProcessor for StoreProcessor {
     fn get_command(&self) -> &String {
         &self.command
     }
-    fn get_input(&self) -> &String {
-        &self.input
+    fn get_input(&self, input_list: &mut Vec<String>) -> Result<(), Error> {
+        *input_list = self.input_list.clone();
+        Ok(())
     }
-    fn get_output(&self) -> &String {
-        &self.output
+    fn get_output(&self, output_list: &mut Vec<String>) -> Result<(), Error> {
+        *output_list = self.output_list.clone();
+        Ok(())
     }
     fn get_pass(&self) -> &String {
         &self.pass

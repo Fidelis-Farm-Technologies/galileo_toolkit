@@ -34,9 +34,9 @@ impl TableTrait for VpnTable {
 
         let record_iter = stmt
             .query_map([], |row| {
-                let daddr: String = row.get(3).expect("missing daddr");
-                let vpn: String = row.get(2).expect("missing vpn");
-                let key = format!("{}({})", daddr, vpn);
+                //let daddr: String = row.get(3).expect("missing daddr");
+                //let vpn: String = row.get(2).expect("missing vpn");
+                //let key = format!("{}({})", daddr, vpn);
                 Ok(MetricRecord {
                     stream: StreamType::TELEMETRY as u32,
                     bucket: row.get(0).expect("missing bucket"),

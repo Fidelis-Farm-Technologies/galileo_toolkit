@@ -6,11 +6,8 @@
  * See license information in LICENSE.
  */
 
-use chrono::{TimeZone, Utc};
 use duckdb::{params, Connection, Error};
 
-use crate::model::binning::optimal_binner::F64Binner;
-use crate::model::binning::optimal_binner::OptimalBinner;
 use crate::model::histogram::ipaddr_category::IpAddrCategoryHistogram;
 use crate::model::histogram::number::NumberHistogram;
 use crate::model::histogram::numeric_category::NumericCategoryHistogram;
@@ -22,16 +19,13 @@ use crate::model::histogram::{
     DEFAULT_VLAN_MODULUS, HBOS_SCORE, HBOS_SUMMARY, NO_MODULUS,
 };
 use crate::model::table::DistinctObserveRecord;
-use crate::model::table::FeatureSummaryRecord;
-use crate::model::table::HbosHistogram;
-use crate::model::table::HbosScoreRecord;
+
 use crate::model::table::HbosSummaryRecord;
 use crate::model::table::MemFlowRecord;
-use crate::utils::duckdb::{duckdb_open, duckdb_open_memory};
-use duckdb::types::{Value, ValueRef};
+use crate::utils::duckdb::duckdb_open_memory;
+
 use duckdb::{Appender, DropBehavior};
 use std::collections::HashMap;
-use std::io::Write;
 
 enum Severity {
     None = 0,
@@ -56,6 +50,7 @@ pub struct HistogramModels {
     pub medium: f64,
     pub high: f64,
     pub severe: f64,
+    pub filter: String,
 }
 
 impl HistogramModels {
@@ -182,9 +177,11 @@ impl HistogramModels {
                     medium: row.get(12).expect("missing med"),
                     high: row.get(13).expect("missing high"),
                     severe: row.get(14).expect("missing severe"),
+                    filter: row.get(15).expect("missing filter"),
                 })
             })
             .expect("HbosSummaryRecord");
+        self.filter = hbos_summary.filter;
         self.low = hbos_summary.low;
         self.medium = hbos_summary.medium;
         self.high = hbos_summary.high;
@@ -279,7 +276,7 @@ impl HistogramModels {
             let _ = db_out.execute_batch("BEGIN TRANSACTION;");
 
             for record in record_iter {
-                let mut record = record?;
+                let record = record?;
 
                 let mut is_first = true;
                 let risk_bits: u64 = record.risk_bits;
@@ -379,8 +376,8 @@ impl HistogramModels {
         let mut score_appender = tx.appender("score_table")?;
 
         let sql_command = format!(
-            "SELECT * EXCLUDE(tag, hbos_map, ndpi_risk_list) FROM flow WHERE observe='{}' AND dvlan = {} AND proto='{}';",
-            self.observe, self.vlan, self.proto
+            "SELECT * EXCLUDE(tag, hbos_map, ndpi_risk_list) FROM flow WHERE observe='{}' AND dvlan = {} AND proto='{}' AND {};",
+            self.observe, self.vlan, self.proto, self.filter
         );
         let mut stmt = db_in.prepare(&sql_command)?;
         let record_iter = stmt.query_map([], |row| {
@@ -455,51 +452,49 @@ impl HistogramModels {
             let mut flow_record = record?;
             let mut histogram_map: HashMap<String, f64> = HashMap::new();
             flow_record.hbos_score = 0.0;
-            if flow_record.proto == "udp"
-                || (flow_record.proto == "tcp" && flow_record.iflags.starts_with("Ss.a"))
-            {
-                let mut hbos_score: f64 = 0.0;
-                for (name, histogram) in &mut self.numerical {
-                    let feature_prob = histogram.get_probability(&flow_record);
-                    histogram_map.insert(name.to_string(), feature_prob);
-                    hbos_score += (1.0 / feature_prob).log10();
-                }
-                for (name, histogram) in &mut self.numeric_category {
-                    let feature_prob = histogram.get_probability(&flow_record);
-                    histogram_map.insert(name.to_string(), feature_prob);
-                    hbos_score += (1.0 / feature_prob).log10();
-                }
-                for (name, histogram) in &mut self.string_category {
-                    let feature_prob = histogram.get_probability(&flow_record);
-                    histogram_map.insert(name.to_string(), feature_prob);
-                    hbos_score += (1.0 / feature_prob).log10();
-                }
-                for (name, histogram) in &mut self.ipaddr_category {
-                    let feature_prob = histogram.get_probability(&flow_record);
-                    histogram_map.insert(name.to_string(), feature_prob);
-                    hbos_score += (1.0 / feature_prob).log10();
-                }
-                for (name, histogram) in &mut self.time_category {
-                    let feature_prob = histogram.get_probability(&flow_record);
-                    histogram_map.insert(name.to_string(), feature_prob);
-                    hbos_score += (1.0 / feature_prob).log10();
-                }
-                flow_record.hbos_score = hbos_score;
 
-                flow_record.hbos_severity = if hbos_score > self.severe {
-                    Severity::Severe as u8
-                } else if hbos_score > self.high {
-                    Severity::High as u8
-                } else if hbos_score > self.medium {
-                    Severity::Medium as u8
-                } else if hbos_score > self.low {
-                    Severity::Low as u8
-                } else {
-                    Severity::None as u8
-                };
-
-                count += 1;
+            let mut hbos_score: f64 = 0.0;
+            for (name, histogram) in &mut self.numerical {
+                let feature_prob = histogram.get_probability(&flow_record);
+                histogram_map.insert(name.to_string(), feature_prob);
+                hbos_score += (1.0 / feature_prob).log10();
             }
+            for (name, histogram) in &mut self.numeric_category {
+                let feature_prob = histogram.get_probability(&flow_record);
+                histogram_map.insert(name.to_string(), feature_prob);
+                hbos_score += (1.0 / feature_prob).log10();
+            }
+            for (name, histogram) in &mut self.string_category {
+                let feature_prob = histogram.get_probability(&flow_record);
+                histogram_map.insert(name.to_string(), feature_prob);
+                hbos_score += (1.0 / feature_prob).log10();
+            }
+            for (name, histogram) in &mut self.ipaddr_category {
+                let feature_prob = histogram.get_probability(&flow_record);
+                histogram_map.insert(name.to_string(), feature_prob);
+                hbos_score += (1.0 / feature_prob).log10();
+            }
+            for (name, histogram) in &mut self.time_category {
+                let feature_prob = histogram.get_probability(&flow_record);
+                histogram_map.insert(name.to_string(), feature_prob);
+                hbos_score += (1.0 / feature_prob).log10();
+            }
+            flow_record.hbos_score = hbos_score;
+
+            flow_record.hbos_severity = if hbos_score > self.severe {
+                Severity::Severe as u8
+            } else if hbos_score > self.high {
+                Severity::High as u8
+            } else if hbos_score > self.medium {
+                Severity::Medium as u8
+            } else if hbos_score > self.low {
+                Severity::Low as u8
+            } else {
+                Severity::None as u8
+            };
+
+            count += 1;
+
             score_appender.append_row(params![flow_record.id, flow_record.hbos_score])?;
         }
         score_appender.flush()?;
@@ -551,7 +546,7 @@ impl HistogramModels {
                 })
                 .expect("expected query map");
             for result in hist_iter {
-                let (boundary, frequency) = result.expect("expected histogram");
+                let (boundary, _frequency) = result.expect("expected histogram");
                 low = medium;
                 medium = high;
                 high = severe;
@@ -564,13 +559,13 @@ impl HistogramModels {
     pub fn summarize(
         &mut self,
         parquet_conn: &mut Connection,
-        db_conn: &mut Connection,
+        db_conn: &mut Connection
     ) -> Result<(), Error> {
         let mut score_conn = duckdb_open_memory(2);
 
         let sql_command = format!(
-            "SELECT * EXCLUDE(tag, hbos_map, ndpi_risk_list) FROM flow WHERE observe='{}' AND dvlan = {} AND proto='{}';",         
-            self.observe, self.vlan, self.proto
+            "SELECT * EXCLUDE(tag, hbos_map, ndpi_risk_list) FROM flow WHERE observe='{}' AND dvlan = {} AND proto='{}' AND {};",         
+            self.observe, self.vlan, self.proto, self.filter
         );
         let mut stmt = parquet_conn.prepare(&sql_command).expect("sql summarize");
         let record_iter = stmt
@@ -721,6 +716,7 @@ impl HistogramModels {
                         medium: medium,
                         high: high,
                         severe: severe,
+                        filter: self.filter.to_string(),
                     })
                 })
                 .expect("HbosSummaryRecord");
@@ -754,7 +750,8 @@ impl HistogramModels {
                     hbos_summary.low,
                     hbos_summary.medium,
                     hbos_summary.high,
-                    hbos_summary.severe
+                    hbos_summary.severe,
+                    hbos_summary.filter,
                 ])
                 .expect("hbos_summary");
             let _ = appender.flush();
@@ -767,38 +764,40 @@ impl HistogramModels {
         &mut self,
         conn: &Connection,
         feature_list: &Vec<String>,
+        filter: &str,
     ) -> Result<(), duckdb::Error> {
-        //println!("\tfeatures={:?}", feature_list);
+        
+        self.filter = filter.to_string();
         for feature in feature_list {
-            //println!(
-            //    "\tbuilding histogram for feature: [{}/{}/{}/{}]",
-            //    self.observe, self.vlan, self.proto, feature
-            //);
             match feature.as_str() {
                 "stime" => {
-                    let mut histogram = TimeCategoryHistogram::new(feature);
+                    let mut histogram = TimeCategoryHistogram::new(feature, &filter);
                     histogram.build(conn, &self.observe, self.vlan, &self.proto)?;
                     self.time_category.insert(feature.to_string(), histogram);
                 }
                 "dur" => {
-                    let mut histogram =
-                        NumberHistogram::new(&feature.to_string(), DEFAULT_FREQUENCY_BIN_SIZE);
+                    let mut histogram = NumberHistogram::new(
+                        &feature.to_string(),
+                        DEFAULT_FREQUENCY_BIN_SIZE,
+                        &filter,
+                    );
                     histogram.build(conn, &self.observe, self.vlan, &self.proto)?;
                     self.numerical.insert(feature.to_string(), histogram);
                 }
                 "rtt" => {
-                    let mut histogram = NumberHistogram::new(feature, DEFAULT_FREQUENCY_BIN_SIZE);
+                    let mut histogram =
+                        NumberHistogram::new(feature, DEFAULT_FREQUENCY_BIN_SIZE, &filter);
                     histogram.build(conn, &self.observe, self.vlan, &self.proto)?;
                     self.numerical.insert(feature.to_string(), histogram);
                 }
                 "pcr" => {
                     let mut histogram =
-                        NumericCategoryHistogram::new(&(*feature).to_string(), NO_MODULUS);
+                        NumericCategoryHistogram::new(&(*feature).to_string(), NO_MODULUS, &filter);
                     histogram.build(conn, &self.observe, self.vlan, &self.proto)?;
                     self.numeric_category.insert(feature.to_string(), histogram);
                 }
                 "proto" => {
-                    let mut histogram = StringCategoryHistogram::new(feature);
+                    let mut histogram = StringCategoryHistogram::new(feature, &filter);
                     histogram.build(conn, &self.observe, self.vlan, &self.proto)?;
                     self.string_category.insert(feature.to_string(), histogram);
                 }
@@ -806,7 +805,9 @@ impl HistogramModels {
                     let mut histogram = IpAddrCategoryHistogram::new(
                         &(*feature).to_string(),
                         DEFAULT_NETWORK_MODULUS,
+                        &filter,
                     );
+
                     histogram.build(conn, &self.observe, self.vlan, &self.proto)?;
                     self.ipaddr_category.insert(feature.to_string(), histogram);
                 }
@@ -814,6 +815,7 @@ impl HistogramModels {
                     let mut histogram = IpAddrCategoryHistogram::new(
                         &(*feature).to_string(),
                         DEFAULT_NETWORK_MODULUS,
+                        &filter,
                     );
                     histogram.build(conn, &self.observe, self.vlan, &self.proto)?;
                     self.ipaddr_category.insert(feature.to_string(), histogram);
@@ -822,6 +824,7 @@ impl HistogramModels {
                     let mut histogram = NumericCategoryHistogram::new(
                         &(*feature).to_string(),
                         DEFAULT_PORT_MODULUS,
+                        &filter,
                     );
                     histogram.build(conn, &self.observe, self.vlan, &self.proto)?;
                     self.numeric_category.insert(feature.to_string(), histogram);
@@ -830,17 +833,18 @@ impl HistogramModels {
                     let mut histogram = NumericCategoryHistogram::new(
                         &(*feature).to_string(),
                         DEFAULT_PORT_MODULUS,
+                        &filter,
                     );
                     histogram.build(conn, &self.observe, self.vlan, &self.proto)?;
                     self.numeric_category.insert(feature.to_string(), histogram);
                 }
                 "iflags" => {
-                    let mut histogram = StringCategoryHistogram::new(feature);
+                    let mut histogram = StringCategoryHistogram::new(feature, &filter);
                     histogram.build(conn, &self.observe, self.vlan, &self.proto)?;
                     self.string_category.insert(feature.to_string(), histogram);
                 }
                 "uflags" => {
-                    let mut histogram = StringCategoryHistogram::new(feature);
+                    let mut histogram = StringCategoryHistogram::new(feature, &filter);
                     histogram.build(conn, &self.observe, self.vlan, &self.proto)?;
                     self.string_category.insert(feature.to_string(), histogram);
                 }
@@ -848,134 +852,153 @@ impl HistogramModels {
                     let mut histogram = NumericCategoryHistogram::new(
                         &(*feature).to_string(),
                         DEFAULT_VLAN_MODULUS,
+                        &filter,
                     );
                     histogram.build(conn, &self.observe, self.vlan, &self.proto)?;
                     self.numeric_category.insert(feature.to_string(), histogram);
                 }
                 "sbytes" => {
-                    let mut histogram = NumberHistogram::new(feature, DEFAULT_FREQUENCY_BIN_SIZE);
+                    let mut histogram =
+                        NumberHistogram::new(feature, DEFAULT_FREQUENCY_BIN_SIZE, &filter);
                     histogram.build(conn, &self.observe, self.vlan, &self.proto)?;
                     self.numerical.insert(feature.to_string(), histogram);
                 }
                 "dbytes" => {
-                    let mut histogram = NumberHistogram::new(feature, DEFAULT_FREQUENCY_BIN_SIZE);
+                    let mut histogram =
+                        NumberHistogram::new(feature, DEFAULT_FREQUENCY_BIN_SIZE, &filter);
                     histogram.build(conn, &self.observe, self.vlan, &self.proto)?;
                     self.numerical.insert(feature.to_string(), histogram);
                 }
                 "spkts" => {
-                    let mut histogram = NumberHistogram::new(feature, DEFAULT_FREQUENCY_BIN_SIZE);
+                    let mut histogram =
+                        NumberHistogram::new(feature, DEFAULT_FREQUENCY_BIN_SIZE, &filter);
                     histogram.build(conn, &self.observe, self.vlan, &self.proto)?;
                     self.numerical.insert(feature.to_string(), histogram);
                 }
                 "dpkts" => {
-                    let mut histogram = NumberHistogram::new(feature, DEFAULT_FREQUENCY_BIN_SIZE);
+                    let mut histogram =
+                        NumberHistogram::new(feature, DEFAULT_FREQUENCY_BIN_SIZE, &filter);
                     histogram.build(conn, &self.observe, self.vlan, &self.proto)?;
                     self.numerical.insert(feature.to_string(), histogram);
                 }
                 "sentropy" => {
                     let mut histogram =
-                        NumericCategoryHistogram::new(&(*feature).to_string(), NO_MODULUS);
+                        NumericCategoryHistogram::new(&(*feature).to_string(), NO_MODULUS, &filter);
                     histogram.build(conn, &self.observe, self.vlan, &self.proto)?;
                     self.numeric_category.insert(feature.to_string(), histogram);
                 }
                 "dentropy" => {
                     let mut histogram =
-                        NumericCategoryHistogram::new(&(*feature).to_string(), NO_MODULUS);
+                        NumericCategoryHistogram::new(&(*feature).to_string(), NO_MODULUS, &filter);
                     histogram.build(conn, &self.observe, self.vlan, &self.proto)?;
                     self.numeric_category.insert(feature.to_string(), histogram);
                 }
                 "siat" => {
-                    let mut histogram = NumberHistogram::new(feature, DEFAULT_FREQUENCY_BIN_SIZE);
+                    let mut histogram =
+                        NumberHistogram::new(feature, DEFAULT_FREQUENCY_BIN_SIZE, &filter);
                     histogram.build(conn, &self.observe, self.vlan, &self.proto)?;
                     self.numerical.insert(feature.to_string(), histogram);
                 }
                 "diat" => {
-                    let mut histogram = NumberHistogram::new(feature, DEFAULT_FREQUENCY_BIN_SIZE);
+                    let mut histogram =
+                        NumberHistogram::new(feature, DEFAULT_FREQUENCY_BIN_SIZE, &filter);
                     histogram.build(conn, &self.observe, self.vlan, &self.proto)?;
                     self.numerical.insert(feature.to_string(), histogram);
                 }
                 "ssmallpktcnt" => {
-                    let mut histogram = NumberHistogram::new(feature, DEFAULT_FREQUENCY_BIN_SIZE);
+                    let mut histogram =
+                        NumberHistogram::new(feature, DEFAULT_FREQUENCY_BIN_SIZE, &filter);
                     histogram.build(conn, &self.observe, self.vlan, &self.proto)?;
                     self.numerical.insert(feature.to_string(), histogram);
                 }
                 "dsmallpktcnt" => {
-                    let mut histogram = NumberHistogram::new(feature, DEFAULT_FREQUENCY_BIN_SIZE);
+                    let mut histogram =
+                        NumberHistogram::new(feature, DEFAULT_FREQUENCY_BIN_SIZE, &filter);
                     histogram.build(conn, &self.observe, self.vlan, &self.proto)?;
                     self.numerical.insert(feature.to_string(), histogram);
                 }
                 "slargepktcnt" => {
-                    let mut histogram = NumberHistogram::new(feature, DEFAULT_FREQUENCY_BIN_SIZE);
+                    let mut histogram =
+                        NumberHistogram::new(feature, DEFAULT_FREQUENCY_BIN_SIZE, &filter);
                     histogram.build(conn, &self.observe, self.vlan, &self.proto)?;
                     self.numerical.insert(feature.to_string(), histogram);
                 }
                 "dlargepktcnt" => {
-                    let mut histogram = NumberHistogram::new(feature, DEFAULT_FREQUENCY_BIN_SIZE);
+                    let mut histogram =
+                        NumberHistogram::new(feature, DEFAULT_FREQUENCY_BIN_SIZE, &filter);
                     histogram.build(conn, &self.observe, self.vlan, &self.proto)?;
                     self.numerical.insert(feature.to_string(), histogram);
                 }
                 "sfirstnonemptycnt" => {
-                    let mut histogram = NumberHistogram::new(feature, DEFAULT_FREQUENCY_BIN_SIZE);
+                    let mut histogram =
+                        NumberHistogram::new(feature, DEFAULT_FREQUENCY_BIN_SIZE, &filter);
                     histogram.build(conn, &self.observe, self.vlan, &self.proto)?;
                     self.numerical.insert(feature.to_string(), histogram);
                 }
                 "dfirstnonemptycnt" => {
-                    let mut histogram = NumberHistogram::new(feature, DEFAULT_FREQUENCY_BIN_SIZE);
+                    let mut histogram =
+                        NumberHistogram::new(feature, DEFAULT_FREQUENCY_BIN_SIZE, &filter);
                     histogram.build(conn, &self.observe, self.vlan, &self.proto)?;
                     self.numerical.insert(feature.to_string(), histogram);
                 }
                 "smaxpktsize" => {
-                    let mut histogram = NumberHistogram::new(feature, DEFAULT_FREQUENCY_BIN_SIZE);
+                    let mut histogram =
+                        NumberHistogram::new(feature, DEFAULT_FREQUENCY_BIN_SIZE, &filter);
                     histogram.build(conn, &self.observe, self.vlan, &self.proto)?;
                     self.numerical.insert(feature.to_string(), histogram);
                 }
                 "dmaxpktsize" => {
-                    let mut histogram = NumberHistogram::new(feature, DEFAULT_FREQUENCY_BIN_SIZE);
+                    let mut histogram =
+                        NumberHistogram::new(feature, DEFAULT_FREQUENCY_BIN_SIZE, &filter);
                     histogram.build(conn, &self.observe, self.vlan, &self.proto)?;
                     self.numerical.insert(feature.to_string(), histogram);
                 }
                 "sstdevpayload" => {
-                    let mut histogram = NumberHistogram::new(feature, DEFAULT_FREQUENCY_BIN_SIZE);
+                    let mut histogram =
+                        NumberHistogram::new(feature, DEFAULT_FREQUENCY_BIN_SIZE, &filter);
                     histogram.build(conn, &self.observe, self.vlan, &self.proto)?;
                     self.numerical.insert(feature.to_string(), histogram);
                 }
                 "dstdevpayload" => {
-                    let mut histogram = NumberHistogram::new(feature, DEFAULT_FREQUENCY_BIN_SIZE);
+                    let mut histogram =
+                        NumberHistogram::new(feature, DEFAULT_FREQUENCY_BIN_SIZE, &filter);
                     histogram.build(conn, &self.observe, self.vlan, &self.proto)?;
                     self.numerical.insert(feature.to_string(), histogram);
                 }
                 "sasn" => {
-                    let mut histogram = NumericCategoryHistogram::new(feature, DEFAULT_ASN_MODULUS);
+                    let mut histogram =
+                        NumericCategoryHistogram::new(feature, DEFAULT_ASN_MODULUS, &filter);
                     histogram.build(conn, &self.observe, self.vlan, &self.proto)?;
                     self.numeric_category.insert(feature.to_string(), histogram);
                 }
                 "dasn" => {
-                    let mut histogram = NumericCategoryHistogram::new(feature, DEFAULT_ASN_MODULUS);
+                    let mut histogram =
+                        NumericCategoryHistogram::new(feature, DEFAULT_ASN_MODULUS, &filter);
                     histogram.build(conn, &self.observe, self.vlan, &self.proto)?;
                     self.numeric_category.insert(feature.to_string(), histogram);
                 }
                 "scountry" => {
-                    let mut histogram = StringCategoryHistogram::new(feature);
+                    let mut histogram = StringCategoryHistogram::new(feature, &filter);
                     histogram.build(conn, &self.observe, self.vlan, &self.proto)?;
                     self.string_category.insert(feature.to_string(), histogram);
                 }
                 "dcountry" => {
-                    let mut histogram = StringCategoryHistogram::new(feature);
+                    let mut histogram = StringCategoryHistogram::new(feature, &filter);
                     histogram.build(conn, &self.observe, self.vlan, &self.proto)?;
                     self.string_category.insert(feature.to_string(), histogram);
                 }
                 "spd" => {
-                    let mut histogram = StringCategoryHistogram::new(feature);
+                    let mut histogram = StringCategoryHistogram::new(feature, &filter);
                     histogram.build(conn, &self.observe, self.vlan, &self.proto)?;
                     self.string_category.insert(feature.to_string(), histogram);
                 }
                 "ndpi_appid" => {
-                    let mut histogram = StringCategoryHistogram::new(feature);
+                    let mut histogram = StringCategoryHistogram::new(feature, &filter);
                     histogram.build(conn, &self.observe, self.vlan, &self.proto)?;
                     self.string_category.insert(feature.to_string(), histogram);
                 }
                 "orient" => {
-                    let mut histogram = StringCategoryHistogram::new(feature);
+                    let mut histogram = StringCategoryHistogram::new(feature, &filter);
                     histogram.build(conn, &self.observe, self.vlan, &self.proto)?;
                     self.string_category.insert(feature.to_string(), histogram);
                 }

@@ -11,12 +11,12 @@ use crate::model::histogram::HistogramType::*;
 use crate::model::histogram::*;
 use crate::model::table::HistogramIntegerValue;
 use crate::model::table::MemFlowRecord;
-use crate::model::table::NumberRecord;
-use crate::model::table::{FeatureSummaryRecord, HistogramSummaryTable, NumericHistogramTable};
+//use crate::model::table::NumberRecord;
+use crate::model::table::{HistogramSummaryTable, NumericHistogramTable};
 use duckdb::{params, Appender, Connection, DropBehavior};
-use std::cmp::min;
-use std::collections::HashMap;
-use std::error::Error;
+//use std::cmp::min;
+//use std::collections::HashMap;
+//use std::error::Error;
 
 #[derive(Debug)]
 pub struct NumberHistogram {
@@ -24,27 +24,23 @@ pub struct NumberHistogram {
     bin_boundary: Vec<i64>,
     bin_frequency: Vec<usize>,
     bin_count: usize,
+    filter: String,
     count: usize,
 }
 
 impl NumberHistogram {
-    pub fn new(name: &str, bin_count: usize) -> NumberHistogram {
+    pub fn new(name: &str, bin_count: usize, filter: &str) -> NumberHistogram {
         NumberHistogram {
             name: name.to_string(),
             bin_boundary: Vec::new(),
             bin_frequency: Vec::new(),
             bin_count: bin_count,
+            filter: filter.to_string(),
             count: 0,
         }
     }
 
-    fn serialize_summary(
-        &self,
-        appender: &mut Appender,
-        observe: &String,
-        vlan: i64,
-        proto: &String,
-    ) {
+    fn serialize_summary(&self, appender: &mut Appender, observe: &str, vlan: i64, proto: &str) {
         appender
             .append_row(params![
                 observe,
@@ -55,16 +51,11 @@ impl NumberHistogram {
                 self.count,
                 0,
                 self.bin_count,
+                self.filter,
             ])
             .unwrap();
     }
-    fn serialize_histogram(
-        &self,
-        appender: &mut Appender,
-        observe: &String,
-        vlan: i64,
-        proto: &String,
-    ) {
+    fn serialize_histogram(&self, appender: &mut Appender, observe: &str, vlan: i64, proto: &str) {
         println!(
             "{}: serializing [{}/{}/{}/{}]...",
             self.name, observe, vlan, proto, self.name
@@ -91,14 +82,14 @@ impl NumberHistogram {
     pub fn build(
         &mut self,
         db: &Connection,
-        observe: &String,
+        observe: &str,
         vlan: i64,
-        proto: &String,
+        proto: &str,
     ) -> Result<(), duckdb::Error> {
         let sql_create_command = format!(
             "CREATE OR REPLACE TABLE number AS SELECT {} 
-            FROM flow WHERE observe='{}' AND dvlan = {} AND proto='{}';",
-            self.name, observe, vlan, proto,
+            FROM flow WHERE observe='{}' AND dvlan = {} AND proto='{}' AND {};",
+            self.name, observe, vlan, proto, self.filter
         );
         db.execute_batch(&sql_create_command)?;
 
@@ -137,10 +128,10 @@ impl NumberHistogram {
     }
     pub fn load(
         db: &Connection,
-        name: &String,
-        observe: &String,
+        name: &str,
+        observe: &str,
         vlan: i64,
-        proto: &String,
+        proto: &str,
     ) -> NumberHistogram {
         let sql_command = format!(
             "SELECT * FROM histogram_summary WHERE observe='{}' AND vlan = {} AND proto='{}' AND name='{}';",
@@ -158,6 +149,7 @@ impl NumberHistogram {
                     count: row.get(5).expect("missing max"),
                     hash_size: row.get(6).expect("missing hash_size"),
                     bin_count: row.get(7).expect("missing bin_count"),
+                    filter: row.get(8).expect("missing filter"),
                 })
             })
             .unwrap();
@@ -170,6 +162,7 @@ impl NumberHistogram {
             bin_boundary: vec![0; summary.bin_count as usize],
             bin_frequency: vec![0; summary.bin_count as usize],
             bin_count: summary.bin_count,
+            filter: summary.filter,
             count: summary.count,
         };
 

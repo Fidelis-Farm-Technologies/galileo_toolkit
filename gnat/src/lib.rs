@@ -27,6 +27,7 @@ pub mod pipeline {
     use chrono::Timelike;
     use chrono::Utc;
     use dotenv::dotenv;
+    use duckdb::params;
     use std::collections::HashMap;
     use std::env;
     use std::env::VarError;
@@ -244,17 +245,35 @@ pub mod pipeline {
                 let sql_get_stream = format!(
                     "CREATE OR REPLACE TABLE flow AS SELECT * FROM '{}'; 
                      ALTER TABLE flow RENAME version TO stream;
-                     UPDATE flow SET stream = 100;
-                     COPY flow TO '{}' (FORMAT parquet);",
-                    file, tmp_file
+                     UPDATE flow SET stream = 100;",
+                    file
                 );
 
                 db_conn.execute_batch(&sql_get_stream).map_err(|e| {
                     Error::new(std::io::ErrorKind::Other, format!("DuckDB error: {}", e))
                 })?;
 
-                fs::remove_file(file).expect("failed to remove old file");
-                fs::rename(tmp_file.as_str(), file.as_str()).expect("failed to rename new file");
+                match db_conn.execute(
+                    "COPY flow TO '?' (FORMAT parquet, CODEC 'snappy', ROW_GROUP_SIZE 100_000);",
+                    params![tmp_file],
+                ) {
+                    Ok(count) => {
+                        if count > 0 {
+                            fs::remove_file(file)?;
+                            fs::rename(&tmp_file, &file)?;
+                        } else {
+                            if !Path::new(&tmp_file).exists() {
+                                fs::remove_file(&tmp_file)?;
+                            }
+                        }
+                    }
+                    Err(err) => {
+                        return Err(Error::new(
+                            std::io::ErrorKind::Other,
+                            format!("DuckDB error: {}", err),
+                        ))
+                    }
+                }
             }
         }
         Ok(())
@@ -305,6 +324,13 @@ pub mod pipeline {
         fn listen(&mut self) -> Result<(), Error> {
             self.socket()
         }
+        fn export_parquet(
+            &mut self,
+            parquet_list: String,
+            output_list: &Vec<String>,
+        ) -> Result<(), Error> {
+            Ok(())
+        }
         fn forward(
             &mut self,
             parquet_list: String,
@@ -329,25 +355,30 @@ pub mod pipeline {
                     self.get_command(),
                     safe_rfc3339
                 );
-
-                let sql_command = format!(
-                    "COPY (SELECT * FROM read_parquet({})) TO '{}' (FORMAT 'parquet', CODEC 'snappy', ROW_GROUP_SIZE 100_000);",
-                    parquet_list, tmp_filename
-                );
-                db_out.execute_batch(&sql_command).map_err(|e| {
-                    Error::new(std::io::ErrorKind::Other, format!("DuckDB error: {}", e))
-                })?;
-
-                fs::rename(&tmp_filename, &final_filename).map_err(|e| {
-                    Error::new(
-                        std::io::ErrorKind::Other,
-                        format!("File rename error: {}", e),
-                    )
-                })?;
+                // Prepare the SQL command to copy data from Parquet files
+                match db_out.execute("COPY (SELECT * FROM read_parquet([?])) 
+                                   TO '?' (FORMAT 'parquet', CODEC 'snappy', ROW_GROUP_SIZE 100_000);", params![parquet_list, tmp_filename]) {
+                    Ok(count) => {
+                        if count > 0 {
+                            fs::rename(&tmp_filename, &final_filename)?;
+                        } else {
+                            if !Path::new(&tmp_filename).exists() {
+                                fs::remove_file(&tmp_filename)?;
+                            }
+                        }
+                    }
+                    Err(err) => {
+                        return Err(Error::new(
+                            std::io::ErrorKind::Other,
+                            format!("DuckDB error: {}", err),
+                        ))
+                    }
+                }
             }
             let _ = db_out.close();
             Ok(())
         }
+       
         fn process_directory(
             &mut self,
             input: &str,
@@ -417,7 +448,7 @@ pub mod pipeline {
                 }
 
                 //
-                // move files to pass or delete
+                // move files to pass through directory or delete
                 //
                 for (index, file) in file_list.iter_mut().enumerate() {
                     if pass_list.is_empty() {

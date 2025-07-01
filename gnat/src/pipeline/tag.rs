@@ -237,6 +237,7 @@ impl FileProcessor for TagProcessor {
             mem_conn.execute_batch(&sql_command).map_err(|e| {
                 Error::new(std::io::ErrorKind::Other, format!("DuckDB error: {}", e))
             })?;
+            
         }
 
         self.export_parquet_file(&mem_conn);

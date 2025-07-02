@@ -359,7 +359,7 @@ ycCloseReader(
 }
 
 int libfixbuf_file_import(
-    const char *command,    
+    const char *command,
     const char *observation,
     const char *input_file,
     const char *output_dir,
@@ -459,10 +459,10 @@ int libfixbuf_file_import(
 
     if (gnat.ipfix_flows_skipped > 0)
     {
-        fprintf(stderr, "%s: processed [%s] with %llu flows [skipped %llu IPv6 Hop-by-Hop]\n",
+        fprintf(stdout, "%s: processed [%s] with %llu flows [skipped %llu IPv6 Hop-by-Hop]\n",
                 command, input_file, (long long)gnat.ipfix_flows, (long long)gnat.ipfix_flows_skipped);
     }
-    else
+    else if (gnat.ipfix_flows > 0)
     {
         fprintf(stdout, "%s: processed [%s] with %llu flows\n",
                 command, input_file, (long long)gnat.ipfix_flows);
@@ -587,7 +587,7 @@ int libfixbuf_socket_import(
     if (!mio_source_init_app(&source, mio_ov_in, MIO_T_APP, &gnat, &err))
     {
         if (err && err->message)
-            air_opterr("%s: cannot set up MIO input: %s", command,err->message);
+            air_opterr("%s: cannot set up MIO input: %s", command, err->message);
     }
 
     g_message("libfixbuf_socket_import: loop");

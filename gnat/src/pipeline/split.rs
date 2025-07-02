@@ -6,6 +6,7 @@
  * See license information in LICENSE.
  */
 
+use crate::pipeline::check_parquet_stream;
 use crate::pipeline::load_environment;
 use crate::pipeline::StreamType;
 use crate::utils::duckdb::duckdb_open_memory;
@@ -153,6 +154,21 @@ impl FileProcessor for SplitProcessor {
             .join(",");
         let parquet_list = format!("[{}]", parquet_list);
 
+        // Check if the parquet files are valid
+        // If not, skip processing
+        // This is a performance optimization to avoid processing invalid files
+        // If the files are not valid, we will not be able to read them
+        // and will end up with an empty table
+        if let Ok(status) = check_parquet_stream(&parquet_list) {
+            if status == false {
+                eprintln!(
+                    "{}: invalid stream of parquet files, skipping",
+                    self.command
+                );
+                return Ok(());
+            }
+        }
+
         let conn = duckdb_open_memory(2);
 
         let current_utc: DateTime<Utc> = Utc::now();
@@ -161,40 +177,39 @@ impl FileProcessor for SplitProcessor {
         let safe_rfc3339 = rfc3339_name.replace(":", "-");
 
         for split in &self.split_list {
-            println!(
-                "{}: processing split [{} => {}]",
-                self.command, split.proto, split.path
-            );
-            let tmp_filename = format!(
-                "{}/.gnat-{}-{}.{}.parquet",
-                split.path, self.command, safe_rfc3339, split.proto
-            );
-            let final_filename = format!(
-                "{}/gnat-{}-{}.{}.parquet",
-                split.path, self.command, safe_rfc3339, split.proto
-            );
-
             let sql = format!(
                 "CREATE OR REPLACE TABLE split AS SELECT * FROM read_parquet({}) WHERE proto='{}';",
                 parquet_list, split.proto
             );
+            conn.execute_batch(&sql).map_err(|e| {
+                Error::new(std::io::ErrorKind::Other, format!("DuckDB error: {}", e))
+            })?;
+            let mut stmt = conn.prepare("SELECT COUNT(*) FROM split").map_err(|e| {
+                Error::new(std::io::ErrorKind::Other, format!("DuckDB error: {}", e))
+            })?;
+            let record_count: i64 = stmt.query_row([], |row| row.get(0)).map_err(|e| {
+                Error::new(std::io::ErrorKind::Other, format!("DuckDB error: {}", e))
+            })?;
 
-            match conn.execute(&sql, params![]) {
-                Ok(count) => {
-                    if count > 0 {
-                        let sql_copy = format!("COPY split TO '{}' (FORMAT 'parquet', CODEC 'snappy', ROW_GROUP_SIZE 100_000);", tmp_filename);
-                        let _ = conn.execute_batch(&sql_copy).map_err(|e| {
-                            Error::new(std::io::ErrorKind::Other, format!("DuckDB error: {}", e))
-                        })?;
-                        fs::rename(&tmp_filename, &final_filename)?;
-                    }
-                }
-                Err(err) => {
-                    return Err(Error::new(
-                        std::io::ErrorKind::Other,
-                        format!("DuckDB error: {}", err),
-                    ))
-                }
+            if record_count > 0 {
+                let tmp_filename = format!(
+                    "{}/.gnat-{}-{}.{}.parquet",
+                    split.path, self.command, safe_rfc3339, split.proto
+                );
+                let final_filename = format!(
+                    "{}/gnat-{}-{}.{}.parquet",
+                    split.path, self.command, safe_rfc3339, split.proto
+                );
+                let sql = format!("COPY split TO '{}' (FORMAT 'parquet', CODEC 'snappy', ROW_GROUP_SIZE 100_000);", tmp_filename);
+                conn.execute_batch(&sql).map_err(|e| {
+                    Error::new(std::io::ErrorKind::Other, format!("DuckDB error: {}", e))
+                })?;
+
+                fs::rename(&tmp_filename, &final_filename)?;
+                println!(
+                    "{}: processing split [{} => {}] {} records",
+                    self.command, split.proto, split.path, record_count
+                );
             }
         }
 

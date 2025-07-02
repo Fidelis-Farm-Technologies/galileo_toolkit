@@ -924,8 +924,7 @@ RotateFileSink(MIOSource *source,
                void *ctx,
                uint32_t *flags,
                GError **err)
-{
-    fprintf(stderr, "%s\n", __FUNCTION__);
+{    
     gboolean status = FALSE;
     char file_name[PATH_MAX + 1];
     char tmp_file[(PATH_MAX * 2) + 1];

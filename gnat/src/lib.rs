@@ -122,6 +122,7 @@ pub mod pipeline {
 
     #[derive(Debug, Clone, PartialEq)]
     pub enum StreamType {
+        NONE = 0,
         IPFIX = 10,
         LEGACY = 3,
         FLOW = 100,
@@ -234,7 +235,10 @@ pub mod pipeline {
             "SELECT EXISTS(SELECT 1 FROM parquet_schema('{}') WHERE name = 'stream')",
             file_list[0]
         );
-        let mut stmt = db_conn.prepare(&sql_exists_command).expect("sql prepare");
+        let mut stmt = db_conn
+            .prepare(&sql_exists_command)
+            .map_err(|e| Error::new(std::io::ErrorKind::Other, format!("DuckDB error: {}", e)))?;
+
         let is_current_schema = stmt
             .query_row([], |row| Ok(row.get::<_, bool>(0).expect("missing stream")))
             .expect("missing stream");
@@ -279,22 +283,23 @@ pub mod pipeline {
         Ok(())
     }
 
-    fn get_stream_class(file: &String) -> Result<u32, Error> {
-        if file.ends_with(".yaf") {
-            return Ok(StreamType::IPFIX as u32);
-        } else if file.ends_with(".parquet") {
-            let db_conn = duckdb_open_memory(1);
-            let sql_get_stream = format!("SELECT stream FROM read_parquet('{}') LIMIT 1;", file);
-            let mut stmt = db_conn.prepare(&sql_get_stream).expect("sql prepare");
-            let stream_class = stmt
-                .query_row([], |row| {
-                    Ok(row.get::<_, u32>(0).expect("missing stream_class"))
-                })
-                .expect("missing stream_class");
-            return Ok(stream_class as u32);
-        }
-        return Err(Error::other("unsupported file type"));
+    fn check_parquet_stream(parquet_files: &str) -> Result<bool, Error> {
+        let db_conn = duckdb_open_memory(1);
+
+        let sql_distinct_stream = format!(
+            "SELECT count(DISTINCT stream) FROM read_parquet({});",
+            parquet_files
+        );
+        let mut stmt = db_conn.prepare(&sql_distinct_stream).expect("sql prepare");
+
+        let distinct_count = stmt
+            .query_row([], |row| Ok(row.get::<_, u32>(0).unwrap_or(0)))
+            .unwrap_or(0);
+        let _ = db_conn.close().expect("failed to close db connection");
+
+        return Ok(distinct_count == 1);
     }
+
     pub fn load_environment() -> Result<(), VarError> {
         dotenv().ok();
         Ok(())
@@ -331,9 +336,10 @@ pub mod pipeline {
         ) -> Result<(), Error> {
             Ok(())
         }
-        fn forward(
+        fn forward_old(
             &mut self,
-            parquet_list: String,
+            command: &str,
+            parquet_list: &str,
             output_list: &Vec<String>,
         ) -> Result<(), Error> {
             let current_utc: DateTime<Utc> = Utc::now();
@@ -355,30 +361,61 @@ pub mod pipeline {
                     self.get_command(),
                     safe_rfc3339
                 );
-                // Prepare the SQL command to copy data from Parquet files
-                match db_out.execute("COPY (SELECT * FROM read_parquet([?])) 
-                                   TO '?' (FORMAT 'parquet', CODEC 'snappy', ROW_GROUP_SIZE 100_000);", params![parquet_list, tmp_filename]) {
-                    Ok(count) => {
-                        if count > 0 {
-                            fs::rename(&tmp_filename, &final_filename)?;
-                        } else {
-                            if !Path::new(&tmp_filename).exists() {
-                                fs::remove_file(&tmp_filename)?;
-                            }
-                        }
-                    }
-                    Err(err) => {
-                        return Err(Error::new(
-                            std::io::ErrorKind::Other,
-                            format!("DuckDB error: {}", err),
-                        ))
-                    }
+                let sql = format!("COPY (SELECT * FROM read_parquet({})) 
+                                   TO '{}' (FORMAT 'parquet', CODEC 'snappy', ROW_GROUP_SIZE 100_000);",parquet_list, tmp_filename);
+
+                db_out.execute_batch(&sql).map_err(|e| {
+                    Error::new(std::io::ErrorKind::Other, format!("DuckDB error: {}", e))
+                })?;
+
+                if Path::new(&tmp_filename).exists() {
+                    fs::rename(&tmp_filename, &final_filename)?;
                 }
             }
             let _ = db_out.close();
             Ok(())
         }
-       
+
+        fn forward(&mut self, parquet_list: &str, output_list: &Vec<String>) -> Result<i64, Error> {
+            let command = self.get_command().clone();
+            let current_utc: DateTime<Utc> = Utc::now();
+            let rfc3339_name: String = current_utc.to_rfc3339();
+            // Sanitize rfc3339_name for filesystem safety
+            let safe_rfc3339 = rfc3339_name.replace(":", "-");
+            let mut record_count: i64 = 0;
+            let db_out = duckdb_open_memory(2);
+            for output in output_list {
+                let sql = format!(
+                    "CREATE OR REPLACE TABLE flow AS SELECT * FROM read_parquet({});",
+                    parquet_list
+                );
+                db_out.execute_batch(&sql).map_err(|e| {
+                    Error::new(std::io::ErrorKind::Other, format!("DuckDB error: {}", e))
+                })?;
+                let mut stmt = db_out.prepare("SELECT COUNT(*) FROM flow").map_err(|e| {
+                    Error::new(std::io::ErrorKind::Other, format!("DuckDB error: {}", e))
+                })?;
+                record_count = stmt.query_row([], |row| row.get(0)).map_err(|e| {
+                    Error::new(std::io::ErrorKind::Other, format!("DuckDB error: {}", e))
+                })?;
+
+                if record_count > 0 {
+                    let tmp_filename =
+                        format!("{}/.gnat-{}-{}.parquet", output, command, safe_rfc3339);
+                    let final_filename =
+                        format!("{}/gnat-{}-{}.parquet", output, command, safe_rfc3339);
+                    let sql = format!("COPY flow TO '{}' (FORMAT 'parquet', CODEC 'snappy', ROW_GROUP_SIZE 100_000);", tmp_filename);
+                    db_out.execute_batch(&sql).map_err(|e| {
+                        Error::new(std::io::ErrorKind::Other, format!("DuckDB error: {}", e))
+                    })?;
+
+                    fs::rename(&tmp_filename, &final_filename)?;
+                }
+            }
+            let _ = db_out.close();
+            Ok(record_count)
+        }
+
         fn process_directory(
             &mut self,
             input: &str,
@@ -388,7 +425,6 @@ pub mod pipeline {
             let command = self.get_command().clone();
             let mut file_list: Vec<String> = Vec::new();
             let mut pass_list: Vec<String> = Vec::new();
-            //println!("{}: processing directory {}", command, input);
 
             for entry in fs::read_dir(input).expect("read_dir()") {
                 let file: fs::DirEntry = entry.unwrap();
@@ -420,22 +456,8 @@ pub mod pipeline {
             }
 
             if !file_list.is_empty() {
-                // make sure stream types are compatible
-                //
-
                 check_and_update_schema(&file_list).expect("failed to update legacy schema");
 
-                let stream_class =
-                    get_stream_class(&file_list[0]).expect("get stream class version");
-                if (stream_class == StreamType::IPFIX as u32 && command == "import")
-                    || stream_class == StreamType::FLOW as u32
-                {
-                    println!("{}: processing {} file(s) ...", command, file_list.len());
-                } else {
-                    eprintln!("{}: unsupported stream class: {}", command, stream_class);
-                    eprintln!("{}: check gnat pipeline configuration", command);
-                    std::process::exit(exitcode::CONFIG);
-                }
                 //
                 // process files
                 //
@@ -521,7 +543,7 @@ pub mod pipeline {
                 let mut total_files_processed = 0;
                 // process all input directories
                 for input in &input_list {
-                    total_files_processed += self
+                    total_files_processed = self
                         .process_directory(&input, &pass, &file_extension)
                         .expect("failed to process directory");
                 }

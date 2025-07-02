@@ -9,6 +9,8 @@
 use crate::model::histogram::MD_FLOW_TABLE;
 use crate::pipeline::load_environment;
 use crate::pipeline::use_motherduck;
+
+use crate::pipeline::check_parquet_stream;
 use crate::pipeline::StorageType;
 use crate::pipeline::StreamType;
 use crate::utils::duckdb::{duckdb_open, duckdb_open_memory};
@@ -95,9 +97,9 @@ impl StoreProcessor {
                  URL_STYLE '{}');",
                 s3_access_key_id, s3_secret_access_key, s3_region, s3_endpoint, s3_url_style
             );
-            db_conn
-                .execute_batch(&sql_secret)
-                .expect("S3 create secret");
+            db_conn.execute_batch(&sql_secret).map_err(|e| {
+                Error::new(std::io::ErrorKind::Other, format!("DuckDB error: {}", e))
+            })?;
         } else {
             // For local storage, we can use an in-memory connection
             println!("{}: using local storage", command);
@@ -158,6 +160,28 @@ impl StoreProcessor {
     }
     fn upload_to_motherduck(&mut self, file_list: &Vec<String>) -> Result<(), Error> {
         println!("{}: uploading to motherduck...", self.command);
+        // Use iterator and join for file list formatting
+        let parquet_list = file_list
+            .iter()
+            .map(|file| format!("'{}'", file))
+            .collect::<Vec<_>>()
+            .join(",");
+        let parquet_list = format!("[{}]", parquet_list);
+
+        // Check if the parquet files are valid
+        // If not, skip processing
+        // This is a performance optimization to avoid processing invalid files
+        // If the files are not valid, we will not be able to read them
+        // and will end up with an empty table
+        if let Ok(status) = check_parquet_stream(&parquet_list) {
+            if status == false {
+                eprintln!(
+                    "{}: invalid stream of parquet files, skipping",
+                    self.command
+                );
+                return Ok(());
+            }
+        }
         for parquet_file in file_list.clone().into_iter() {
             let sql_export = format!(
                 "INSERT INTO flow SELECT * FROM read_parquet('{}')",
@@ -173,14 +197,28 @@ impl StoreProcessor {
     }
     fn upload_to_s3(&mut self, file_list: &Vec<String>) -> Result<(), Error> {
         println!("{}: uploading to S3...", self.command);
+        // Use iterator and join for file list formatting
+        let parquet_list = file_list
+            .iter()
+            .map(|file| format!("'{}'", file))
+            .collect::<Vec<_>>()
+            .join(",");
+        let parquet_list = format!("[{}]", parquet_list);
 
-        let mut parquet_list = String::from("[");
-        for (_, file) in file_list.clone().into_iter().enumerate() {
-            parquet_list.push_str("'");
-            parquet_list.push_str(&file);
-            parquet_list.push_str("',");
+        // Check if the parquet files are valid
+        // If not, skip processing
+        // This is a performance optimization to avoid processing invalid files
+        // If the files are not valid, we will not be able to read them
+        // and will end up with an empty table
+        if let Ok(status) = check_parquet_stream(&parquet_list) {
+            if status == false {
+                eprintln!(
+                    "{}: invalid stream of parquet files, skipping",
+                    self.command
+                );
+                return Ok(());
+            }
         }
-        parquet_list.push_str("]");
 
         let sql_cmd = format!(
             "SELECT DISTINCT
@@ -235,9 +273,9 @@ impl StoreProcessor {
             dtg.year, dtg.month, dtg.day, dtg.hour,
             dtg.year, dtg.month, dtg.day, dtg.hour, push_time.as_secs());
             //println!("S3_uploader: execute_batch {}", sql_s3_copy);
-            self.db_conn
-                .execute_batch(&sql_s3_copy)
-                .expect("S3 execute upload");
+            self.db_conn.execute_batch(&sql_s3_copy).map_err(|e| {
+                Error::new(std::io::ErrorKind::Other, format!("DuckDB error: {}", e))
+            })?;
         }
         println!("{}: done.", self.command);
         Ok(())
@@ -254,7 +292,6 @@ impl StoreProcessor {
             .collect::<Vec<_>>()
             .join(",");
         let parquet_list = format!("[{}]", parquet_list);
-
 
         let sql_command = format!(
                 "COPY (SELECT *, year(stime) AS year, month(stime) AS month, day(stime) as day, hour(stime) as hour  FROM read_parquet({})) 

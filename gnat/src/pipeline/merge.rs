@@ -7,10 +7,12 @@
  * See license information in LICENSE.
  */
 
+use crate::pipeline::check_parquet_stream;
 use crate::pipeline::load_environment;
 use crate::pipeline::parse_interval;
 use crate::pipeline::parse_options;
 use crate::pipeline::FileProcessor;
+
 use crate::pipeline::Interval;
 use crate::pipeline::StreamType;
 use serde::{Deserialize, Serialize};
@@ -82,7 +84,7 @@ impl MergeProcessor {
         for dir in input_directories {
             if collison_map.insert(dir.input.clone(), "x").is_none() {
                 println!("\tinput: [{}]", dir.input);
-                input_list.push(dir.input);            
+                input_list.push(dir.input);
             } else {
                 println!("\t{} (duplicate)", dir.input);
             }
@@ -129,7 +131,23 @@ impl FileProcessor for MergeProcessor {
             .collect::<Vec<_>>()
             .join(",");
         let parquet_list = format!("[{}]", parquet_list);
-        let _ = self.forward(parquet_list, &self.output_list.clone())?;
+
+        // Check if the parquet files are valid
+        // If not, skip processing
+        // This is a performance optimization to avoid processing invalid files
+        // If the files are not valid, we will not be able to read them
+        // and will end up with an empty table
+        if let Ok(status) = check_parquet_stream(&parquet_list) {
+            if status == false {
+                eprintln!(
+                    "{}: invalid stream of parquet files, skipping",
+                    self.command
+                );
+                return Ok(());
+            }
+        }
+
+        let _ = self.forward(&parquet_list, &self.output_list.clone())?;
 
         Ok(())
     }

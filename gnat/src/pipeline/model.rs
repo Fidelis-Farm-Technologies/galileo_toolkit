@@ -13,6 +13,8 @@ use crate::model::histogram::numeric_category::NumericCategoryHistogram;
 use crate::model::histogram::string_category::StringCategoryHistogram;
 use crate::model::histogram::time_category::TimeCategoryHistogram;
 use crate::model::histogram::MINIMUM_DAYS;
+
+use crate::pipeline::check_parquet_stream;
 use crate::pipeline::load_environment;
 use crate::pipeline::use_motherduck;
 use crate::pipeline::StreamType;
@@ -156,6 +158,28 @@ impl FileProcessor for ModelProcessor {
         false
     }
     fn process(&mut self, file_list: &Vec<String>) -> Result<(), Error> {
+        // Use iterator and join for file list formatting
+        let parquet_list = file_list
+            .iter()
+            .map(|file| format!("'{}'", file))
+            .collect::<Vec<_>>()
+            .join(",");
+        let parquet_list = format!("[{}]", parquet_list);
+
+        // Check if the parquet files are valid
+        // If not, skip processing
+        // This is a performance optimization to avoid processing invalid files
+        // If the files are not valid, we will not be able to read them
+        // and will end up with an empty table
+        if let Ok(status) = check_parquet_stream(&parquet_list) {
+            if status == false {
+                eprintln!(
+                    "{}: invalid stream of parquet files, skipping",
+                    self.command
+                );
+                return Ok(());
+            }
+        }
         // check if the model file exists, if so, the age
         // is checked to determine if a new model should be built
         if Path::new(&self.model_list[0]).exists() {
@@ -187,14 +211,6 @@ impl FileProcessor for ModelProcessor {
         let tmp_output = format!("{}.tmp", self.model_list[0]);
         let mut db_conn = duckdb_open(&tmp_output, 2);
         let mut parquet_conn = duckdb_open_memory(2);
-
-        // Use iterator and join for file list formatting
-        let parquet_list = file_list
-            .iter()
-            .map(|file| format!("'{}'", file))
-            .collect::<Vec<_>>()
-            .join(",");
-        let parquet_list = format!("[{}]", parquet_list);
 
         // check the number of days in the dataset
         {

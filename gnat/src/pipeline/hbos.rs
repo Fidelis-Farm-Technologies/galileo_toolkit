@@ -15,6 +15,8 @@ use crate::model::histogram::time_category::TimeCategoryHistogram;
 use crate::model::histogram::{MODEL_DISTINCT_OBSERVATIONS, PARQUET_DISTINCT_OBSERVATIONS};
 use crate::model::table::DistinctObservation;
 use crate::model::table::HbosSummaryRecord;
+
+use crate::pipeline::check_parquet_stream;
 use crate::pipeline::load_environment;
 use crate::pipeline::StreamType;
 use crate::utils::duckdb::{duckdb_open_memory, duckdb_open_readonly};
@@ -287,13 +289,28 @@ impl FileProcessor for HbosProcessor {
             .map(|file| format!("'{}'", file))
             .collect::<Vec<_>>()
             .join(",");
-
         let parquet_list = format!("[{}]", parquet_list);
+
+        // Check if the parquet files are valid
+        // If not, skip processing
+        // This is a performance optimization to avoid processing invalid files
+        // If the files are not valid, we will not be able to read them
+        // and will end up with an empty table
+        if let Ok(status) = check_parquet_stream(&parquet_list) {
+            if status == false {
+                eprintln!(
+                    "{}: invalid stream of parquet files, skipping",
+                    self.command
+                );
+                return Ok(());
+            }
+        }
+
         if let Err(_e) = self.load_model() {
             // If loading the model fails,
             // it is because the model db does not exit,
             // therefore, just forward the data
-            let _ = self.forward(parquet_list, &self.output_list.clone());
+            let _ = self.forward(&parquet_list, &self.output_list.clone());
             return Ok(());
         }
 

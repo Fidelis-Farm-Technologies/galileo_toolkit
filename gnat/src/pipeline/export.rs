@@ -7,9 +7,10 @@
  */
 
 use crate::pipeline::FIELDS;
-use crate::utils::duckdb::{duckdb_open_memory};
+use crate::utils::duckdb::duckdb_open_memory;
 use chrono::{DateTime, Utc};
 
+use crate::pipeline::check_parquet_stream;
 use crate::pipeline::load_environment;
 use crate::pipeline::parse_interval;
 use crate::pipeline::parse_options;
@@ -116,19 +117,35 @@ impl FileProcessor for ExportProcessor {
         true
     }
     fn process(&mut self, file_list: &Vec<String>) -> Result<(), Error> {
-        let conn = duckdb_open_memory(2);
+        let parquet_list = file_list
+            .iter()
+            .map(|file| format!("'{}'", file))
+            .collect::<Vec<_>>()
+            .join(",");
+        let parquet_list = format!("[{}]", parquet_list);
 
-        let mut parquet_list = String::from("[");
-        for file in file_list.clone().into_iter() {
-            parquet_list.push('\'');
-            parquet_list.push_str(&file);
-            parquet_list.push_str("',");
+        // Check if the parquet files are valid
+        // If not, skip processing
+        // This is a performance optimization to avoid processing invalid files
+        // If the files are not valid, we will not be able to read them
+        // and will end up with an empty table
+        if let Ok(status) = check_parquet_stream(&parquet_list) {
+            if status == false {
+                eprintln!(
+                    "{}: invalid stream of parquet files, skipping",
+                    self.command
+                );
+                return Ok(());
+            }
         }
-        parquet_list.push(']');
 
+        let conn = duckdb_open_memory(2);
         let current_utc: DateTime<Utc> = Utc::now();
         let rfc3339_name: String = current_utc.to_rfc3339();
-        let output_file = format!("{}/gnat-{}-{}", self.output_list[0], self.command, rfc3339_name);
+        let output_file = format!(
+            "{}/gnat-{}-{}",
+            self.output_list[0], self.command, rfc3339_name
+        );
 
         let sql_command: String;
         match self.format.as_str() {

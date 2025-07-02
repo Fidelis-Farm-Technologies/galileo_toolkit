@@ -6,6 +6,7 @@
  * See license information in LICENSE.
  */
 
+use crate::pipeline::check_parquet_stream;
 use crate::pipeline::load_environment;
 use crate::pipeline::parse_interval;
 use crate::pipeline::parse_options;
@@ -211,13 +212,28 @@ impl FileProcessor for AggregationProcessor {
         return true;
     }
     fn process(&mut self, file_list: &Vec<String>) -> Result<(), Error> {
-        // Use iterator and join for file list formatting
+
         let parquet_list = file_list
             .iter()
             .map(|file| format!("'{}'", file))
             .collect::<Vec<_>>()
             .join(",");
         let parquet_list = format!("[{}]", parquet_list);
+
+        // Check if the parquet files are valid
+        // If not, skip processing
+        // This is a performance optimization to avoid processing invalid files
+        // If the files are not valid, we will not be able to read them
+        // and will end up with an empty table
+        if let Ok(status) = check_parquet_stream(&parquet_list) {
+            if status == false {
+                eprintln!(
+                    "{}: invalid stream of parquet files, skipping",
+                    self.command
+                );
+                return Ok(());
+            }
+        }
 
         let mem_source = duckdb_open_memory(2);
         let sql_command = format!(

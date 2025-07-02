@@ -115,7 +115,6 @@ impl FileProcessor for ImportProcessor {
     }
     fn process(&mut self, file_list: &Vec<String>) -> Result<(), Error> {
         for file in file_list.iter() {
- 
             let import_result = unsafe_ipfix_file_import(
                 &self.command,
                 &file,
@@ -127,7 +126,6 @@ impl FileProcessor for ImportProcessor {
             if import_result != 0 {
                 return Err(Error::other(format!("import failed for file: {}", file)));
             }
-
         }
         Ok(())
     }

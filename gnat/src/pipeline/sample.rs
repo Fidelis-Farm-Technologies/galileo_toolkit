@@ -11,13 +11,14 @@ use crate::model::table::DistinctObservation;
 use crate::pipeline::load_environment;
 use crate::pipeline::parse_interval;
 use crate::pipeline::parse_options;
+
+use crate::pipeline::check_parquet_stream;
 use crate::pipeline::FileProcessor;
 
 use crate::pipeline::Interval;
 use crate::pipeline::StreamType;
 use crate::utils::duckdb::duckdb_open_memory;
 use chrono::{DateTime, Utc};
-
 
 use std::fs;
 use std::io::Error;
@@ -147,7 +148,7 @@ impl SampleProcessor {
     }
 
     fn generate_samples(&mut self, file_list: &Vec<String>) -> Result<(), Error> {
-        let conn = duckdb_open_memory(2);
+        // Use iterator and join for file list formatting
         let parquet_list = file_list
             .iter()
             .map(|file| format!("'{}'", file))
@@ -155,6 +156,21 @@ impl SampleProcessor {
             .join(",");
         let parquet_list = format!("[{}]", parquet_list);
 
+        // Check if the parquet files are valid
+        // If not, skip processing
+        // This is a performance optimization to avoid processing invalid files
+        // If the files are not valid, we will not be able to read them
+        // and will end up with an empty table
+        if let Ok(status) = check_parquet_stream(&parquet_list) {
+            if status == false {
+                eprintln!(
+                    "{}: invalid stream of parquet files, skipping",
+                    self.command
+                );
+                return Ok(());
+            }
+        }
+        let conn = duckdb_open_memory(2);
         // check the number of days in the dataset
         {
             println!("{}: checking dataset duration...", self.command);
@@ -274,6 +290,7 @@ impl FileProcessor for SampleProcessor {
         true
     }
     fn process(&mut self, file_list: &Vec<String>) -> Result<(), Error> {
+
         self.generate_samples(file_list)?;
         self.purge_old()?;
         Ok(())

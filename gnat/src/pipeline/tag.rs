@@ -9,6 +9,8 @@
 extern crate exitcode;
 
 use crate::pipeline::StreamType;
+
+use crate::pipeline::check_parquet_stream;
 use crate::utils::duckdb::duckdb_open_memory;
 use duckdb::Connection;
 use serde::{Deserialize, Serialize};
@@ -216,6 +218,7 @@ impl FileProcessor for TagProcessor {
         true
     }
     fn process(&mut self, file_list: &Vec<String>) -> Result<(), Error> {
+        // Use iterator and join for file list formatting
         let parquet_list = file_list
             .iter()
             .map(|file| format!("'{}'", file))
@@ -223,6 +226,20 @@ impl FileProcessor for TagProcessor {
             .join(",");
         let parquet_list = format!("[{}]", parquet_list);
 
+        // Check if the parquet files are valid
+        // If not, skip processing
+        // This is a performance optimization to avoid processing invalid files
+        // If the files are not valid, we will not be able to read them
+        // and will end up with an empty table
+        if let Ok(status) = check_parquet_stream(&parquet_list) {
+            if status == false {
+                eprintln!(
+                    "{}: invalid stream of parquet files, skipping",
+                    self.command
+                );
+                return Ok(());
+            }
+        }
         let mem_conn = duckdb_open_memory(2);
         let sql_command = format!(
             "CREATE TABLE flow AS SELECT * FROM read_parquet({})",
@@ -237,7 +254,6 @@ impl FileProcessor for TagProcessor {
             mem_conn.execute_batch(&sql_command).map_err(|e| {
                 Error::new(std::io::ErrorKind::Other, format!("DuckDB error: {}", e))
             })?;
-            
         }
 
         self.export_parquet_file(&mem_conn);

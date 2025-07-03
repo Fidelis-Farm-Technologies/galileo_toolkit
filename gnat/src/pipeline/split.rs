@@ -176,17 +176,19 @@ impl FileProcessor for SplitProcessor {
         // Sanitize rfc3339_name for filesystem safety
         let safe_rfc3339 = rfc3339_name.replace(":", "-");
 
+        let sql = format!(
+            "CREATE OR REPLACE TABLE flow AS SELECT * FROM read_parquet({});",
+            parquet_list
+        );
+        conn.execute_batch(&sql)
+            .map_err(|e| Error::new(std::io::ErrorKind::Other, format!("DuckDB error: {}", e)))?;
+
         for split in &self.split_list {
-            let sql = format!(
-                "CREATE OR REPLACE TABLE split AS SELECT * FROM read_parquet({}) WHERE proto='{}';",
-                parquet_list, split.proto
-            );
-            conn.execute_batch(&sql).map_err(|e| {
+            let sql_count = format!("SELECT COUNT(proto) FROM flow WHERE proto='{}'", split.proto);
+            let mut stmt = conn.prepare(&sql_count).map_err(|e| {
                 Error::new(std::io::ErrorKind::Other, format!("DuckDB error: {}", e))
             })?;
-            let mut stmt = conn.prepare("SELECT COUNT(*) FROM split").map_err(|e| {
-                Error::new(std::io::ErrorKind::Other, format!("DuckDB error: {}", e))
-            })?;
+
             let record_count: i64 = stmt.query_row([], |row| row.get(0)).map_err(|e| {
                 Error::new(std::io::ErrorKind::Other, format!("DuckDB error: {}", e))
             })?;
@@ -200,7 +202,11 @@ impl FileProcessor for SplitProcessor {
                     "{}/gnat-{}-{}.{}.parquet",
                     split.path, self.command, safe_rfc3339, split.proto
                 );
-                let sql = format!("COPY split TO '{}' (FORMAT 'parquet', CODEC 'snappy', ROW_GROUP_SIZE 100_000);", tmp_filename);
+                let sql = format!(
+                    "COPY (SELECT * FROM flow WHERE proto='{}') TO '{}' (FORMAT 'parquet', CODEC 'snappy', ROW_GROUP_SIZE 100_000);",
+                    split.proto, tmp_filename
+                );
+
                 conn.execute_batch(&sql).map_err(|e| {
                     Error::new(std::io::ErrorKind::Other, format!("DuckDB error: {}", e))
                 })?;

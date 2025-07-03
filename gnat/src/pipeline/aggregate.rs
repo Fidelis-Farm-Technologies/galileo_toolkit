@@ -237,7 +237,7 @@ impl FileProcessor for AggregationProcessor {
 
         let mem_source = duckdb_open_memory(2);
         let sql_command = format!(
-            "CREATE TABLE memtable AS SELECT * FROM read_parquet({});",
+            "CREATE TABLE flow AS SELECT * FROM read_parquet({});",
             parquet_list
         );
         mem_source

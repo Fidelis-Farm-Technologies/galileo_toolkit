@@ -15,12 +15,12 @@ impl TableTrait for CountryTable {
 
     fn insert(&self, source: &duckdb::Connection, sink: &mut Appender) {
         //
-        // query DuckDB memtable
+        // query DuckDB flow
         //
         let mut stmt = source
             .prepare(
                 "SELECT time_bucket (INTERVAL '1' minute, stime) as bucket,observe,scountry,count()
-                FROM memtable 
+                FROM flow 
                 GROUP BY all 
                 ORDER BY all;",
             )
@@ -58,7 +58,7 @@ impl TableTrait for CountryTable {
         let mut stmt = source
             .prepare(
                 "SELECT time_bucket (INTERVAL '1' minute, stime) as bucket,observe,dcountry,count()
-                FROM memtable 
+                FROM flow 
                 GROUP BY all 
                 ORDER BY all;",
             )

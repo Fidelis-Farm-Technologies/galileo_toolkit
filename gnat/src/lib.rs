@@ -336,46 +336,7 @@ pub mod pipeline {
         ) -> Result<(), Error> {
             Ok(())
         }
-        fn forward_old(
-            &mut self,
-            command: &str,
-            parquet_list: &str,
-            output_list: &Vec<String>,
-        ) -> Result<(), Error> {
-            let current_utc: DateTime<Utc> = Utc::now();
-            let rfc3339_name: String = current_utc.to_rfc3339();
-            // Sanitize rfc3339_name for filesystem safety
-            let safe_rfc3339 = rfc3339_name.replace(":", "-");
-
-            let db_out = duckdb_open_memory(2);
-            for output in output_list {
-                let tmp_filename = format!(
-                    "{}/.gnat-{}-{}.parquet",
-                    output,
-                    self.get_command(),
-                    safe_rfc3339
-                );
-                let final_filename = format!(
-                    "{}/gnat-{}-{}.parquet",
-                    output,
-                    self.get_command(),
-                    safe_rfc3339
-                );
-                let sql = format!("COPY (SELECT * FROM read_parquet({})) 
-                                   TO '{}' (FORMAT 'parquet', CODEC 'snappy', ROW_GROUP_SIZE 100_000);",parquet_list, tmp_filename);
-
-                db_out.execute_batch(&sql).map_err(|e| {
-                    Error::new(std::io::ErrorKind::Other, format!("DuckDB error: {}", e))
-                })?;
-
-                if Path::new(&tmp_filename).exists() {
-                    fs::rename(&tmp_filename, &final_filename)?;
-                }
-            }
-            let _ = db_out.close();
-            Ok(())
-        }
-
+        
         fn forward(&mut self, parquet_list: &str, output_list: &Vec<String>) -> Result<i64, Error> {
             let command = self.get_command().clone();
             let current_utc: DateTime<Utc> = Utc::now();
@@ -392,7 +353,7 @@ pub mod pipeline {
                 db_out.execute_batch(&sql).map_err(|e| {
                     Error::new(std::io::ErrorKind::Other, format!("DuckDB error: {}", e))
                 })?;
-                let mut stmt = db_out.prepare("SELECT COUNT(*) FROM flow").map_err(|e| {
+                let mut stmt = db_out.prepare("SELECT COUNT(*) FROM flow;").map_err(|e| {
                     Error::new(std::io::ErrorKind::Other, format!("DuckDB error: {}", e))
                 })?;
                 record_count = stmt.query_row([], |row| row.get(0)).map_err(|e| {

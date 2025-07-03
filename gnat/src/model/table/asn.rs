@@ -21,7 +21,7 @@ impl TableTrait for AsnTable {
                                             dasn,                                            
                                             dasnorg,                                            
                                             count() 
-                                        FROM memtable 
+                                        FROM flow 
                                         GROUP BY all 
                                         ORDER BY all;",
             )

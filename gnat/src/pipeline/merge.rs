@@ -147,8 +147,12 @@ impl FileProcessor for MergeProcessor {
             }
         }
 
-        let _ = self.forward(&parquet_list, &self.output_list.clone())?;
-
+        let record_count = self.forward(&parquet_list, &self.output_list.clone())?;
+        if record_count > 0 {
+            println!("{}: {} flows merged", self.command, record_count);
+        } else {
+            println!("{}: no flows merged", self.command);
+        }
         Ok(())
     }
 }

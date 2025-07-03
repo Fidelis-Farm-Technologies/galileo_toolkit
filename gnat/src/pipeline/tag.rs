@@ -166,7 +166,7 @@ impl TagProcessor {
         tag_rules
     }
 
-    fn export_parquet_file(&self, conn: &Connection) {
+    fn export_parquet_file(&self, conn: &Connection) -> Result<(), Error> {
         let current_utc: DateTime<Utc> = Utc::now();
         let rfc3339_name: String = current_utc.to_rfc3339();
         let safe_rfc3339 = rfc3339_name.replace(":", "-");
@@ -184,6 +184,8 @@ impl TagProcessor {
         );
         conn.execute_batch(&sql_command).expect("sql batch");
         fs::rename(&tmp_filename, &final_filename).expect("renaming");
+
+        Ok(())
     }
 }
 
@@ -256,7 +258,7 @@ impl FileProcessor for TagProcessor {
             })?;
         }
 
-        self.export_parquet_file(&mem_conn);
+        let _ = self.export_parquet_file(&mem_conn);
 
         Ok(())
     }

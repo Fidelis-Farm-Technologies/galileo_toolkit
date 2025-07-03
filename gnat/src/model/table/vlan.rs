@@ -15,7 +15,7 @@ impl TableTrait for VlanTable {
 
     fn insert(&self, source: &duckdb::Connection, sink: &mut Appender) {
         //
-        // query DuckDB memtable
+        // query DuckDB flow
         //
         let mut stmt = source
             .prepare(
@@ -23,7 +23,7 @@ impl TableTrait for VlanTable {
                                             observe,
                                             dvlan,                                                                                   
                                             count() 
-                                        FROM memtable 
+                                        FROM flow 
                                         GROUP BY all 
                                         ORDER BY all;").unwrap();
 

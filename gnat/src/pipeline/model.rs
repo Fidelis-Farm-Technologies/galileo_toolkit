@@ -65,7 +65,7 @@ impl ModelProcessor {
             .or_insert("daddr,dport,dentropy,sentropy,diat,siat,spd,pcr,orient,stime");
         options
             .entry("filter")
-            .or_insert("proto='udp' OR (proto='tcp' AND iflags ^@ 'Ss.a')");
+            .or_insert("proto='udp' OR (proto='tcp' AND iflags ^@ 'Ss')");
         options.entry("md").or_insert("");
 
         for (key, value) in &options {
@@ -136,7 +136,7 @@ impl FileProcessor for ModelProcessor {
         Ok(())
     }
     fn get_output(&self, output_list: &mut Vec<String>) -> Result<(), Error> {
-        *output_list = self.model_list.clone();
+        //*output_list = self.model_list.clone();
         Ok(())
     }
     fn get_pass(&self) -> &String {
@@ -208,10 +208,10 @@ impl FileProcessor for ModelProcessor {
                 );
             }
         }
+
+        let mut parquet_conn = duckdb_open_memory(2);
         let tmp_output = format!("{}.tmp", self.model_list[0]);
         let mut db_conn = duckdb_open(&tmp_output, 2);
-        let mut parquet_conn = duckdb_open_memory(2);
-
         // check the number of days in the dataset
         {
             println!("{}: checking dataset duration...", self.command);
@@ -234,16 +234,17 @@ impl FileProcessor for ModelProcessor {
             println!("{}: {} days of data", self.command, days);
             if days < MINIMUM_DAYS {
                 println!("{}: not enough data, skipping model build.", self.command);
+                return Ok(());
             }
-
-            let sql_command = format!(
-                "CREATE TABLE flow AS SELECT * FROM read_parquet({});",
-                parquet_list
-            );
-            parquet_conn.execute_batch(&sql_command).map_err(|e| {
-                Error::new(std::io::ErrorKind::Other, format!("DuckDB error: {}", e))
-            })?;
         }
+
+        let sql_command = format!(
+            "CREATE TABLE flow AS SELECT * FROM read_parquet({});",
+            parquet_list
+        );
+        parquet_conn
+            .execute_batch(&sql_command)
+            .map_err(|e| Error::new(std::io::ErrorKind::Other, format!("DuckDB error: {}", e)))?;
 
         // load observation list
         println!("{}: determining observation points...", self.command);

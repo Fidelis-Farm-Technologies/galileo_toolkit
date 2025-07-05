@@ -114,6 +114,7 @@ impl SampleProcessor {
             println!("{}: no files to purge", self.command);
             return Ok(());
         }
+        
         let parquet_list = file_list
             .iter()
             .map(|file| format!("'{}'", file))
@@ -123,8 +124,7 @@ impl SampleProcessor {
 
         let sql_command = format!(
             "COPY (SELECT * FROM read_parquet({})
-                   WHERE date_trunc('day',stime) > date_add(date_trunc('day',stime), - INTERVAL {} DAY)
-                   AND trigger = 0)
+                   WHERE date_trunc('day',stime) > date_add(date_trunc('day',stime), - INTERVAL {} DAY))
                 TO '{}' (FORMAT 'parquet', CODEC 'snappy', ROW_GROUP_SIZE 100_000);",
             parquet_list, self.retention, tmp_filename
         );
@@ -172,11 +172,12 @@ impl SampleProcessor {
         }
         let conn = duckdb_open_memory(2);
         // check the number of days in the dataset
+        /*
         {
             println!("{}: checking dataset duration...", self.command);
             // Use date_diff to calculate the number of days between the first and last timestamps
             let sql_days_command = format!(
-                "SELECT date_diff('day',first,last) 
+                "SELECT date_diff('day',first,last)
                  FROM (SELECT MIN(stime) AS first, MAX(stime) AS last
                  FROM read_parquet({}));",
                 parquet_list
@@ -196,16 +197,23 @@ impl SampleProcessor {
                 return Ok(());
             }
         }
-        let sql_distinct_command = format!(
-            "SELECT DISTINCT observe, dvlan, proto FROM read_parquet({}) GROUP BY ALL ORDER BY ALL",
+        */
+
+        let sql_command = format!(
+            "CREATE TABLE flow AS SELECT * FROM read_parquet({});",
             parquet_list
         );
-        let mut stmt = conn.prepare(&sql_distinct_command).map_err(|e| {
-            Error::new(
-                std::io::ErrorKind::Other,
-                format!("sql prepare error: {}", e),
-            )
-        })?;
+        conn.execute_batch(&sql_command)
+            .map_err(|e| Error::new(std::io::ErrorKind::Other, format!("DuckDB error: {}", e)))?;
+
+        let mut stmt = conn
+            .prepare("SELECT DISTINCT observe, dvlan, proto FROM flow GROUP BY ALL ORDER BY ALL")
+            .map_err(|e| {
+                Error::new(
+                    std::io::ErrorKind::Other,
+                    format!("sql prepare error: {}", e),
+                )
+            })?;
         let record_iter = stmt
             .query_map([], |row| {
                 Ok(DistinctObservation {
@@ -239,13 +247,13 @@ impl SampleProcessor {
             let tmp_filename = format!("{}/.{}", self.output_list[0], new_filename);
             let final_filename = format!("{}/{}.parquet", self.output_list[0], new_filename);
             let sql_command = format!(
-                "COPY (SELECT * FROM read_parquet({})
+                "COPY (SELECT * FROM flow
                  WHERE observe='{}' 
                    AND dvlan = {} AND proto='{}'                   
                    AND TRIGGER = 0
                  USING SAMPLE {}%)
                  TO '{}' (FORMAT 'parquet', CODEC 'snappy', ROW_GROUP_SIZE 100_000);",
-                parquet_list, record.observe, record.vlan, record.proto, self.percent, tmp_filename
+                record.observe, record.vlan, record.proto, self.percent, tmp_filename
             );
             conn.execute_batch(&sql_command).map_err(|e| {
                 Error::new(std::io::ErrorKind::Other, format!("DuckDB error: {}", e))
@@ -290,7 +298,6 @@ impl FileProcessor for SampleProcessor {
         true
     }
     fn process(&mut self, file_list: &Vec<String>) -> Result<(), Error> {
-
         self.generate_samples(file_list)?;
         self.purge_old()?;
         Ok(())

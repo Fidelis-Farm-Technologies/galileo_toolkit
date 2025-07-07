@@ -38,7 +38,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         &args.input,
         &args.output,
         &args.pass.clone().unwrap_or(String::new()),
-        &args.interval.clone().unwrap_or(String::from("minute")),
+        &args.interval.clone().unwrap_or(String::from("hour")),
         ".parquet",
         &args.options.clone().unwrap_or(String::new()),
     )?;

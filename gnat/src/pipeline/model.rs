@@ -103,6 +103,7 @@ impl ModelProcessor {
         })
     }
     fn upload_model(&self) -> Result<(), Error> {
+        // if the md_database is empty, we do not upload the model
         if !self.md_database.is_empty() {
             let md_conn = duckdb_open("md:", 2);
 
@@ -213,29 +214,28 @@ impl FileProcessor for ModelProcessor {
         let tmp_output = format!("{}.tmp", self.model_list[0]);
         let mut db_conn = duckdb_open(&tmp_output, 2);
         // check the number of days in the dataset
-        {
-            println!("{}: checking dataset duration...", self.command);
-            let sql_days_command = format!(
-                "SELECT date_diff('day',first,last) 
+
+        println!("{}: checking dataset duration...", self.command);
+        let sql_days_command = format!(
+            "SELECT date_diff('day',first,last) 
              FROM (SELECT MIN(stime) AS first, MAX(stime) AS last
              FROM read_parquet({}));",
-                parquet_list
-            );
-            let mut stmt = parquet_conn.prepare(&sql_days_command).map_err(|e| {
-                Error::new(
-                    std::io::ErrorKind::Other,
-                    format!("DuckDB prepare error: {}", e),
-                )
-            })?;
+            parquet_list
+        );
+        let mut stmt = parquet_conn.prepare(&sql_days_command).map_err(|e| {
+            Error::new(
+                std::io::ErrorKind::Other,
+                format!("DuckDB prepare error: {}", e),
+            )
+        })?;
 
-            let days = stmt
-                .query_row([], |row| Ok(row.get::<_, u32>(0).expect("missing version")))
-                .expect("missing days");
-            println!("{}: {} days of data", self.command, days);
-            if days < MINIMUM_DAYS {
-                println!("{}: not enough data, skipping model build.", self.command);
-                return Ok(());
-            }
+        let days = stmt
+            .query_row([], |row| Ok(row.get::<_, u32>(0).expect("missing version")))
+            .expect("missing days");
+        println!("{}: {} days of data", self.command, days);
+        if days < MINIMUM_DAYS {
+            println!("{}: not enough data to baseline, skipping model build.", self.command);
+            return Ok(());
         }
 
         let sql_command = format!(
@@ -330,12 +330,14 @@ impl FileProcessor for ModelProcessor {
                 )
             })?;
         }
-        fs::rename(&tmp_output, &self.model_list[0]).map_err(|e| {
-            Error::new(
-                std::io::ErrorKind::Other,
-                format!("failed to rename model: {}", e),
-            )
-        })?;
+        if Path::new(&tmp_output).exists() {
+            fs::rename(&tmp_output, &self.model_list[0]).map_err(|e| {
+                Error::new(
+                    std::io::ErrorKind::Other,
+                    format!("failed to rename model: {}", e),
+                )
+            })?;
+        }
 
         // upload the model to motherduck if configured
         self.upload_model()?;

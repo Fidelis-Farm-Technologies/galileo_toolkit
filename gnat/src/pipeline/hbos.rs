@@ -110,6 +110,7 @@ impl HbosProcessor {
             return Err(Error::other(error_msg));
         }
 
+        println!("{}: loading hbos summary information", self.command);
         let model_conn = duckdb_open_readonly(&self.model_spec, 2);
 
         let mut stmt = model_conn
@@ -181,6 +182,7 @@ impl HbosProcessor {
             );
             return Err(Error::other(error_msg));
         }
+        println!("{}: loading hbos model information", self.command);
         let mut model_conn = duckdb_open_readonly(&self.model_spec, 2);
         let mut stmt = model_conn
             .prepare(MODEL_DISTINCT_OBSERVATIONS)

@@ -37,7 +37,7 @@ pub mod pipeline {
     use std::thread;
     use std::time::Duration;
     use std::time::Instant;
-    const MAX_BATCH: usize = 64;
+    const MAX_BATCH: usize = 128;
 
     pub mod aggregate;
     pub mod collector;
@@ -336,7 +336,7 @@ pub mod pipeline {
         ) -> Result<(), Error> {
             Ok(())
         }
-        
+
         fn forward(&mut self, parquet_list: &str, output_list: &Vec<String>) -> Result<i64, Error> {
             let command = self.get_command().clone();
             let current_utc: DateTime<Utc> = Utc::now();
@@ -387,63 +387,72 @@ pub mod pipeline {
             let mut file_list: Vec<String> = Vec::new();
             let mut pass_list: Vec<String> = Vec::new();
 
-            for entry in fs::read_dir(input).expect("read_dir()") {
-                let file: fs::DirEntry = entry.unwrap();
-                let file_name = String::from(file.file_name().to_string_lossy());
-                if !file_name.starts_with(".") && file_name.ends_with(&file_extension) {
-                    // make sure yaf file is not locked
-                    let file_path = format!("{}/{}", input, file_name);
+            let mut total_files_processed = 0;
+            loop {
+                file_list.clear();
+                pass_list.clear();
+                for entry in fs::read_dir(input).expect("read_dir()") {
+                    let file: fs::DirEntry = entry.unwrap();
+                    let file_name = String::from(file.file_name().to_string_lossy());
+                    if !file_name.starts_with(".") && file_name.ends_with(&file_extension) {
+                        // make sure yaf file is not locked
+                        let file_path = format!("{}/{}", input, file_name);
 
-                    if file_path.ends_with(".yaf") {
-                        if !Path::new(&format!("{}.lock", file_path)).exists() {
+                        if file_path.ends_with(".yaf") {
+                            if !Path::new(&format!("{}.lock", file_path)).exists() {
+                                file_list.push(file_path);
+                                if !pass.is_empty() {
+                                    let pass_path = format!("{}/{}", pass, file_name);
+                                    pass_list.push(pass_path);
+                                }
+                            }
+                        } else {
                             file_list.push(file_path);
                             if !pass.is_empty() {
                                 let pass_path = format!("{}/{}", pass, file_name);
                                 pass_list.push(pass_path);
                             }
                         }
-                    } else {
-                        file_list.push(file_path);
-                        if !pass.is_empty() {
-                            let pass_path = format!("{}/{}", pass, file_name);
-                            pass_list.push(pass_path);
+                    }
+                    // batch up to MAX_BATCH -- limit the number of files process at once
+                    if file_list.len() >= MAX_BATCH {
+                        break;
+                    }
+                }
+
+                if !file_list.is_empty() {
+                    check_and_update_schema(&file_list).expect("failed to update legacy schema");
+
+                    //
+                    // process files
+                    //
+                    match self.process(&file_list) {
+                        Ok(_) => {}
+                        Err(error) => {
+                            eprintln!("{}: processing failed: {}", command, error);
+                            std::process::exit(exitcode::IOERR);
+                        }
+                    }
+
+                    //
+                    // move files to pass through directory or delete
+                    //
+                    for (index, file) in file_list.iter_mut().enumerate() {
+                        if pass_list.is_empty() {
+                            if self.delete_files() {
+                                fs::remove_file(file).expect("failed to remove file");
+                            }
+                        } else {
+                            fs::rename(&file, &pass_list[index]).expect("failed to rename file");
                         }
                     }
                 }
-                // batch up to MAX_BATCH -- limit the number of files process at once
-                if file_list.len() >= MAX_BATCH {
+                total_files_processed += file_list.len();
+                if file_list.len() < MAX_BATCH {
                     break;
                 }
             }
-
-            if !file_list.is_empty() {
-                check_and_update_schema(&file_list).expect("failed to update legacy schema");
-
-                //
-                // process files
-                //
-                match self.process(&file_list) {
-                    Ok(_) => {}
-                    Err(error) => {
-                        eprintln!("{}: processing failed: {}", command, error);
-                        std::process::exit(exitcode::IOERR);
-                    }
-                }
-
-                //
-                // move files to pass through directory or delete
-                //
-                for (index, file) in file_list.iter_mut().enumerate() {
-                    if pass_list.is_empty() {
-                        if self.delete_files() {
-                            fs::remove_file(file).expect("failed to remove file");
-                        }
-                    } else {
-                        fs::rename(&file, &pass_list[index]).expect("failed to rename file");
-                    }
-                }
-            }
-            Ok(file_list.len())
+            Ok(total_files_processed)
         }
         fn run(&mut self) -> Result<(), Error> {
             let command = self.get_command().clone();
@@ -504,18 +513,23 @@ pub mod pipeline {
                 let mut total_files_processed = 0;
                 // process all input directories
                 for input in &input_list {
-                    total_files_processed = self
+                    total_files_processed += self
                         .process_directory(&input, &pass, &file_extension)
                         .expect("failed to process directory");
                 }
 
-                if total_files_processed == 0 {
-                    if !sleep_interval(&interval) {
-                        println!("{}: shutting down.", command);
-                        return Ok(());
-                    }
-                } else {
-                    println!("{}: elapsed time {:?}", command, start.elapsed());
+                if total_files_processed > 0 {
+                    println!(
+                        "{}: processed {} file(s) in {:?}",
+                        command,
+                        total_files_processed,
+                        start.elapsed()
+                    );
+                }
+
+                if !sleep_interval(&interval) {
+                    println!("{}: shutting down.", command);
+                    return Ok(());
                 }
             }
         }

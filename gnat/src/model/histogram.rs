@@ -14,7 +14,7 @@ pub enum HistogramType {
     Nothing(i32),
 }
 
-pub const DEFAULT_FREQUENCY_BIN_SIZE: u64 = 100;
+pub const DEFAULT_FREQUENCY_BIN_SIZE: usize = 100;
 pub const DEFAULT_VLAN_MODULUS: i64 = 1024;
 pub const DEFAULT_NETWORK_MODULUS: u64 = 8192;
 pub const DEFAULT_PORT_MODULUS: i64 = 8192;
@@ -22,6 +22,7 @@ pub const DEFAULT_ENTROPY_MODULUS: i64 = 256;
 pub const DEFAULT_PCR_MODULUS: i64 = 256;
 pub const DEFAULT_ASN_MODULUS: i64 = 8192;
 pub const NO_MODULUS: i64 = 0;
+pub const MINIMUM_DAYS: u32 = 2;
 
 pub static MODEL_SUMMARY: &str = "CREATE TABLE IF NOT EXISTS model_summary
 (
@@ -118,15 +119,16 @@ pub static HBOS_SUMMARY: &str = "CREATE TABLE IF NOT EXISTS hbos_summary
     low FLOAT,
     medium FLOAT,
     high FLOAT,
+    severe FLOAT
 );";
 
-static HBOS_SCORE: &str = "CREATE TABLE IF NOT EXISTS hbos_score
+static HBOS_SCORE: &str = "CREATE OR REPLACE TABLE hbos_score
 (
     score FLOAT
 )";
 
 pub static MD_FLOW_TABLE: &str = "CREATE TABLE IF NOT EXISTS flow (
-    version UINTEGER,
+    stream UINTEGER,
     id UUID,
     observe VARCHAR,
     stime TIMESTAMP,

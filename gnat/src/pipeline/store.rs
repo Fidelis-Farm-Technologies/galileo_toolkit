@@ -7,25 +7,21 @@
  */
 
 use crate::model::histogram::MD_FLOW_TABLE;
+use crate::pipeline::load_environment;
 use crate::pipeline::use_motherduck;
+
+use crate::pipeline::check_parquet_stream;
 use crate::pipeline::StorageType;
-use crate::utils::duckdb::{duckdb_open, duckdb_open_memory, duckdb_open_readonly};
-use dotenv::dotenv;
+use crate::pipeline::StreamType;
+use crate::utils::duckdb::{duckdb_open, duckdb_open_memory};
 use duckdb::Connection;
 use std::env;
 
-use crate::model::table::MemFlowRecord;
-use chrono::{DateTime, TimeZone, Utc};
-
-use duckdb::{params, Appender, DropBehavior};
-use std::fs;
-use std::process;
 use std::time::SystemTime;
 
 use crate::pipeline::parse_interval;
 use crate::pipeline::parse_options;
 use crate::pipeline::FileProcessor;
-use crate::pipeline::FileType;
 use crate::pipeline::Interval;
 use std::io::Error;
 
@@ -39,8 +35,8 @@ struct DistinctDtg {
 
 pub struct StoreProcessor {
     pub command: String,
-    pub input: String,
-    pub output: String,
+    pub input_list: Vec<String>,
+    pub output_list: Vec<String>,
     pub pass: String,
     pub interval: Interval,
     pub extension: String,
@@ -58,8 +54,9 @@ impl StoreProcessor {
         extension_string: &str,
         options_string: &str,
     ) -> Result<Self, Error> {
+        let _ = load_environment();
         let interval = parse_interval(interval_string);
-        let mut options = parse_options(options_string);
+        let options = parse_options(options_string);
         let storage_type = Self::get_storage_type(output)?;
 
         for (key, value) in &options {
@@ -69,11 +66,16 @@ impl StoreProcessor {
         }
 
         let mut db_conn = duckdb_open_memory(2);
-
         if storage_type == StorageType::MOTHERDUCK {
-            db_conn = duckdb_open(output, 2);
-            db_conn.execute_batch(MD_FLOW_TABLE).expect("execute_batch");
-            println!("{}: connection established with {}", command, output);
+            if use_motherduck(output).expect("motherduck env") {
+                db_conn = duckdb_open(output, 2);
+                let _ = db_conn.execute_batch(MD_FLOW_TABLE).map_err(|e| {
+                    Error::new(std::io::ErrorKind::Other, format!("DuckDB error: {}", e))
+                })?;
+                println!("{}: connection established with {}", command, output);
+            } else {
+                return Err(Error::other("motherduck is not enabled"));
+            }
         } else if storage_type == StorageType::S3 {
             let s3_region = env::var("s3_region").expect("missing S3 region");
             let s3_endpoint = env::var("s3_endpoint").expect("missing S3 endpoint");
@@ -95,17 +97,21 @@ impl StoreProcessor {
                  URL_STYLE '{}');",
                 s3_access_key_id, s3_secret_access_key, s3_region, s3_endpoint, s3_url_style
             );
-            db_conn
-                .execute_batch(&sql_secret)
-                .expect("S3 create secret");
+            db_conn.execute_batch(&sql_secret).map_err(|e| {
+                Error::new(std::io::ErrorKind::Other, format!("DuckDB error: {}", e))
+            })?;
         } else {
             // For local storage, we can use an in-memory connection
             println!("{}: using local storage", command);
         }
+        let mut input_list = Vec::<String>::new();
+        input_list.push(input.to_string());
+        let mut output_list = Vec::<String>::new();
+        output_list.push(output.to_string());
         Ok(Self {
             command: command.to_string(),
-            input: input.to_string(),
-            output: output.to_string(),
+            input_list: input_list,
+            output_list: output_list,
             pass: pass.to_string(),
             interval: interval,
             extension: extension_string.to_string(),
@@ -116,13 +122,11 @@ impl StoreProcessor {
 
     pub fn get_storage_type(output: &str) -> Result<StorageType, Error> {
         if output.starts_with("md:") {
-            dotenv().ok();
             let motherduck_token = env::var("motherduck_token");
             if motherduck_token.is_ok() {
                 return Ok(StorageType::MOTHERDUCK);
             }
         } else if output.starts_with("s3://") {
-            dotenv().ok();
             let s3_bucket = env::var("s3_bucket");
             if !s3_bucket.is_ok() {
                 return Err(Error::other("missing S3 bucket name"));
@@ -156,30 +160,65 @@ impl StoreProcessor {
     }
     fn upload_to_motherduck(&mut self, file_list: &Vec<String>) -> Result<(), Error> {
         println!("{}: uploading to motherduck...", self.command);
+        // Use iterator and join for file list formatting
+        let parquet_list = file_list
+            .iter()
+            .map(|file| format!("'{}'", file))
+            .collect::<Vec<_>>()
+            .join(",");
+        let parquet_list = format!("[{}]", parquet_list);
 
+        // Check if the parquet files are valid
+        // If not, skip processing
+        // This is a performance optimization to avoid processing invalid files
+        // If the files are not valid, we will not be able to read them
+        // and will end up with an empty table
+        if let Ok(status) = check_parquet_stream(&parquet_list) {
+            if status == false {
+                eprintln!(
+                    "{}: invalid stream of parquet files, skipping",
+                    self.command
+                );
+                return Ok(());
+            }
+        }
         for parquet_file in file_list.clone().into_iter() {
             let sql_export = format!(
                 "INSERT INTO flow SELECT * FROM read_parquet('{}')",
                 parquet_file
             );
-            self.db_conn
-                .execute_batch(&sql_export)
-                .expect("execute_batch()");
-            println!("{}:\t{}", self.command, parquet_file);
+            let _ = self.db_conn.execute_batch(&sql_export).map_err(|e| {
+                Error::new(std::io::ErrorKind::Other, format!("DuckDB error: {}", e))
+            })?;
+            //println!("{}:\t{}", self.command, parquet_file);
         }
-
+        println!("{}: done.", self.command);
         Ok(())
     }
     fn upload_to_s3(&mut self, file_list: &Vec<String>) -> Result<(), Error> {
         println!("{}: uploading to S3...", self.command);
+        // Use iterator and join for file list formatting
+        let parquet_list = file_list
+            .iter()
+            .map(|file| format!("'{}'", file))
+            .collect::<Vec<_>>()
+            .join(",");
+        let parquet_list = format!("[{}]", parquet_list);
 
-        let mut parquet_list = String::from("[");
-        for (_, file) in file_list.clone().into_iter().enumerate() {
-            parquet_list.push_str("'");
-            parquet_list.push_str(&file);
-            parquet_list.push_str("',");
+        // Check if the parquet files are valid
+        // If not, skip processing
+        // This is a performance optimization to avoid processing invalid files
+        // If the files are not valid, we will not be able to read them
+        // and will end up with an empty table
+        if let Ok(status) = check_parquet_stream(&parquet_list) {
+            if status == false {
+                eprintln!(
+                    "{}: invalid stream of parquet files, skipping",
+                    self.command
+                );
+                return Ok(());
+            }
         }
-        parquet_list.push_str("]");
 
         let sql_cmd = format!(
             "SELECT DISTINCT
@@ -212,7 +251,7 @@ impl StoreProcessor {
             println!(
                 "{}: uploading [{}/year={}/month={}/day={}/hour={}/{}{:02}{:02}{:02}]...",
                 self.command,
-                self.output,
+                self.output_list[0],
                 dtg.year,
                 dtg.month,
                 dtg.day,
@@ -230,21 +269,21 @@ impl StoreProcessor {
             //TO 's3://{}/{}/year={}/month={}/day={}/hour={}/{}{:02}{:02}{:02}-{}.parquet' (FORMAT 'parquet', CODEC 'zstd', ROW_GROUP_SIZE 100_000);", 
             parquet_list,
             dtg.year, dtg.month, dtg.day, dtg.hour,
-            self.output,
+            self.output_list[0],
             dtg.year, dtg.month, dtg.day, dtg.hour,
             dtg.year, dtg.month, dtg.day, dtg.hour, push_time.as_secs());
             //println!("S3_uploader: execute_batch {}", sql_s3_copy);
-            self.db_conn
-                .execute_batch(&sql_s3_copy)
-                .expect("S3 execute upload");
+            self.db_conn.execute_batch(&sql_s3_copy).map_err(|e| {
+                Error::new(std::io::ErrorKind::Other, format!("DuckDB error: {}", e))
+            })?;
         }
-
+        println!("{}: done.", self.command);
         Ok(())
     }
     fn local_storage(&mut self, file_list: &Vec<String>) -> Result<(), Error> {
         println!(
             "{}: updating to local partitioned storage {}",
-            self.command, self.output
+            self.command, self.output_list[0]
         );
         // Use iterator and join for file list formatting
         let parquet_list = file_list
@@ -254,14 +293,10 @@ impl StoreProcessor {
             .join(",");
         let parquet_list = format!("[{}]", parquet_list);
 
-        let push_time = SystemTime::now()
-            .duration_since(SystemTime::UNIX_EPOCH)
-            .expect("now()");
-
         let sql_command = format!(
                 "COPY (SELECT *, year(stime) AS year, month(stime) AS month, day(stime) as day, hour(stime) as hour  FROM read_parquet({})) 
                  TO '{}' (FORMAT 'parquet', CODEC 'snappy', ROW_GROUP_SIZE 100_000, PARTITION_BY(year, month, day, hour), APPEND, FILENAME_PATTERN 'gnat-{{uuid}}');",
-                parquet_list, self.output
+                parquet_list, self.output_list[0]
             );
         self.db_conn
             .execute_batch(&sql_command)
@@ -274,17 +309,22 @@ impl FileProcessor for StoreProcessor {
     fn get_command(&self) -> &String {
         &self.command
     }
-    fn get_input(&self) -> &String {
-        &self.input
+    fn get_input(&self, input_list: &mut Vec<String>) -> Result<(), Error> {
+        *input_list = self.input_list.clone();
+        Ok(())
     }
-    fn get_output(&self) -> &String {
-        &self.output
+    fn get_output(&self, output_list: &mut Vec<String>) -> Result<(), Error> {
+        *output_list = self.output_list.clone();
+        Ok(())
     }
     fn get_pass(&self) -> &String {
         &self.pass
     }
     fn get_interval(&self) -> &Interval {
         &self.interval
+    }
+    fn get_stream_id(&self) -> u32 {
+        StreamType::IPFIX as u32
     }
     fn get_file_extension(&self) -> &String {
         &self.extension
@@ -296,7 +336,7 @@ impl FileProcessor for StoreProcessor {
         true
     }
 
-    fn process(&mut self, file_list: &Vec<String>, schema_version: FileType) -> Result<(), Error> {
+    fn process(&mut self, file_list: &Vec<String>) -> Result<(), Error> {
         match self.storage_type {
             StorageType::MOTHERDUCK => {
                 self.upload_to_motherduck(file_list)?;

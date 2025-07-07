@@ -9,17 +9,16 @@
 use std::io::Error;
 
 use crate::ipfix::libfixbuf::unsafe_ifpix_socket_import;
+use crate::pipeline::load_environment;
 use crate::pipeline::parse_interval;
 use crate::pipeline::parse_options;
 use crate::pipeline::FileProcessor;
-use crate::pipeline::FileType;
 use crate::pipeline::Interval;
-use duckdb::Connection;
-
+use crate::pipeline::StreamType;
 pub struct CollectorProcessor {
     pub command: String,
-    pub host: String,
-    pub output: String,
+    pub host_list: Vec<String>,
+    pub output_list: Vec<String>,
     pub pass: String,
     pub interval: Interval,
     pub extension: String,
@@ -46,6 +45,7 @@ impl CollectorProcessor {
         extension_string: &str,
         options_string: &str,
     ) -> Result<Self, Error> {
+        let _ = load_environment();
         let interval = parse_interval(interval_string);
         let mut options = parse_options(options_string);
 
@@ -90,10 +90,14 @@ impl CollectorProcessor {
             .parse::<bool>()
             .unwrap();
 
+        let mut host_list = Vec::<String>::new();
+        host_list.push(host.to_string());
+        let mut output_list = Vec::<String>::new();
+        output_list.push(output.to_string());
         Ok(Self {
             command: command.to_string(),
-            host: host.to_string(),
-            output: output.to_string(),
+            host_list: host_list,
+            output_list: output_list,
             pass: pass.to_string(),
             interval,
             extension: extension_string.to_string(),
@@ -115,17 +119,22 @@ impl FileProcessor for CollectorProcessor {
     fn get_command(&self) -> &String {
         &self.command
     }
-    fn get_input(&self) -> &String {
-        &self.host
+    fn get_input(&self, input_list: &mut Vec<String>) -> Result<(), Error> {
+        *input_list = self.host_list.clone();
+        Ok(())
     }
-    fn get_output(&self) -> &String {
-        &self.output
+    fn get_output(&self, output_list: &mut Vec<String>) -> Result<(), Error> {
+        *output_list = self.output_list.clone();
+        Ok(())
     }
     fn get_pass(&self) -> &String {
         &self.pass
     }
     fn get_interval(&self) -> &Interval {
         &self.interval
+    }
+    fn get_stream_id(&self) -> u32 {
+        StreamType::IPFIX as u32
     }
     fn get_file_extension(&self) -> &String {
         &self.extension
@@ -134,7 +143,7 @@ impl FileProcessor for CollectorProcessor {
         let status = unsafe_ifpix_socket_import(
             &self.command,
             &self.observation,
-            &self.host,
+            &self.host_list[0],
             &self.port,
             &self.transport,
             &self.ssl_ca_file,
@@ -143,7 +152,7 @@ impl FileProcessor for CollectorProcessor {
             &self.ssl_key_pass,
             self.rotate_interval,
             self.verbose,
-            &self.output,
+            &self.output_list[0],
             &self.asn,
             &self.country,
         );
@@ -159,11 +168,7 @@ impl FileProcessor for CollectorProcessor {
     fn delete_files(&self) -> bool {
         true
     }
-    fn process(
-        &mut self,
-        _file_list: &Vec<String>,
-        _schema_version: FileType,
-    ) -> Result<(), Error> {
+    fn process(&mut self, _file_list: &Vec<String>) -> Result<(), Error> {
         Err(Error::new(
             std::io::ErrorKind::Other,
             "CollectorProcessor::process is not implemented",

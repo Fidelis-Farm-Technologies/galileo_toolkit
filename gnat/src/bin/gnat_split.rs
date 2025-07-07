@@ -7,7 +7,7 @@
  */
 
 use clap::Parser;
-use gnat::pipeline::sample::SampleProcessor;
+use gnat::pipeline::split::SplitProcessor;
 use gnat::pipeline::FileProcessor;
 use std::error::Error;
 
@@ -33,17 +33,17 @@ struct Args {
 fn main() -> Result<(), Box<dyn Error>> {
     let args = Args::parse();
 
-    let mut sample_processor = SampleProcessor::new(
-        "sample",
+    let mut split_processor = SplitProcessor::new(
+        "split",
         &args.input,
         &args.output,
         &args.pass.clone().unwrap_or(String::new()),
-        &args.interval.clone().unwrap_or(String::from("hour")),
+        &args.interval.clone().unwrap_or(String::from("second")),
         ".parquet",
         &args.options.clone().unwrap_or(String::new()),
     )?;
 
-    sample_processor.run()?;
+    split_processor.run()?;
 
     Ok(())
 }

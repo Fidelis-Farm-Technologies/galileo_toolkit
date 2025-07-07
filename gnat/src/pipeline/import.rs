@@ -7,19 +7,19 @@
  */
 
 use crate::ipfix::libfixbuf::unsafe_ipfix_file_import;
+use crate::pipeline::load_environment;
 use crate::pipeline::parse_interval;
 use crate::pipeline::parse_options;
 use crate::pipeline::FileProcessor;
-use crate::pipeline::FileType;
 use crate::pipeline::Interval;
-use duckdb::Connection;
+use crate::pipeline::StreamType;
 use std::io::Error;
 use std::path::Path;
 
 pub struct ImportProcessor {
     pub command: String,
-    pub input: String,
-    pub output: String,
+    pub input_list: Vec<String>,
+    pub output_list: Vec<String>,
     pub pass: String,
     pub interval: Interval,
     pub extension: String,
@@ -38,6 +38,7 @@ impl ImportProcessor {
         extension_string: &str,
         options_string: &str,
     ) -> Result<Self, Error> {
+        let _ = load_environment();
         let interval = parse_interval(interval_string);
         let mut options = parse_options(options_string);
         options.entry("observation").or_insert("gnat");
@@ -64,10 +65,15 @@ impl ImportProcessor {
                 return Err(Error::other("invalid COUNTRY database path"));
             }
         }
+
+        let mut input_list = Vec::<String>::new();
+        input_list.push(input.to_string());
+        let mut output_list = Vec::<String>::new();
+        output_list.push(output.to_string());
         Ok(Self {
             command: command.to_string(),
-            input: input.to_string(),
-            output: output.to_string(),
+            input_list: input_list,
+            output_list: output_list,
             pass: pass.to_string(),
             interval,
             extension: extension_string.to_string(),
@@ -81,17 +87,22 @@ impl FileProcessor for ImportProcessor {
     fn get_command(&self) -> &String {
         &self.command
     }
-    fn get_input(&self) -> &String {
-        &self.input
+    fn get_input(&self, input_list: &mut Vec<String>) -> Result<(), Error> {
+        *input_list = self.input_list.clone();
+        Ok(())
     }
-    fn get_output(&self) -> &String {
-        &self.output
+    fn get_output(&self, output_list: &mut Vec<String>) -> Result<(), Error> {
+        *output_list = self.output_list.clone();
+        Ok(())
     }
     fn get_pass(&self) -> &String {
         &self.pass
     }
     fn get_interval(&self) -> &Interval {
         &self.interval
+    }
+    fn get_stream_id(&self) -> u32 {
+        StreamType::IPFIX as u32
     }
     fn get_file_extension(&self) -> &String {
         &self.extension
@@ -102,23 +113,13 @@ impl FileProcessor for ImportProcessor {
     fn delete_files(&self) -> bool {
         true
     }
-    fn process(&mut self, file_list: &Vec<String>, schema_type: FileType) -> Result<(), Error> {
+    fn process(&mut self, file_list: &Vec<String>) -> Result<(), Error> {
         for file in file_list.iter() {
-            let mut observation = self.observation.clone();
-            if let Some(i) = file.find('-') {
-                if i > 0 {
-                    observation = file[..i].to_string();
-                }
-            }
-            // .yaf files use schema version 0
-            if schema_type != FileType::IPFIX_YAF {
-                return Err(Error::other("unsupported schema version"));
-            }
             let import_result = unsafe_ipfix_file_import(
                 &self.command,
-                file,
-                &self.output,
-                &observation,
+                &file,
+                &self.output_list[0],
+                &self.observation,
                 &self.asn,
                 &self.country,
             );

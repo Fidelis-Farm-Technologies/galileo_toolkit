@@ -6,21 +6,19 @@
  * See license information in LICENSE.
  */
 
-use crate::pipeline::use_motherduck;
-
-use crate::utils::duckdb::{duckdb_open, duckdb_open_memory, duckdb_open_readonly};
-use chrono::prelude::*;
-use chrono::{TimeZone, Utc};
-use duckdb::{Appender, Connection, DropBehavior};
-use std::fs;
-use std::process;
-use std::time::SystemTime;
-
+use crate::pipeline::check_parquet_stream;
+use crate::pipeline::load_environment;
 use crate::pipeline::parse_interval;
 use crate::pipeline::parse_options;
+use crate::pipeline::use_motherduck;
 use crate::pipeline::FileProcessor;
-use crate::pipeline::FileType;
 use crate::pipeline::Interval;
+use crate::pipeline::StreamType;
+use crate::utils::duckdb::{duckdb_open, duckdb_open_memory};
+use chrono::prelude::*;
+use chrono::{TimeZone, Utc};
+use duckdb::{Connection, DropBehavior};
+use std::fs;
 use std::io::Error;
 
 use crate::model::table::appid::AppIdTable;
@@ -47,8 +45,8 @@ pub struct BucketRecord {
 
 pub struct AggregationProcessor {
     pub command: String,
-    pub input: String,
-    pub output: String,
+    pub input_list: Vec<String>,
+    pub output_list: Vec<String>,
     pub pass: String,
     pub interval: Interval,
     pub extension: String,
@@ -71,6 +69,7 @@ impl AggregationProcessor {
         extension_string: &str,
         options_string: &str,
     ) -> Result<Self, Error> {
+        let _ = load_environment();
         let interval = parse_interval(interval_string);
         let mut options = parse_options(options_string);
         options.entry("retention").or_insert("30");
@@ -132,15 +131,17 @@ impl AggregationProcessor {
         let mut db_conn: Connection = Connection::open_in_memory().expect("memory");
         if use_motherduck {
             db_conn = duckdb_open(output, 2);
+            let _ = db_conn.execute_batch(CREATE_METRICS_TABLE).map_err(|e| {
+                Error::new(std::io::ErrorKind::Other, format!("DuckDB error: {}", e))
+            })?;
             println!("{}: connection established with {}", command, output);
         } else {
             db_conn = duckdb_open(&cache_file, 2);
+            let _ = db_conn
+                .execute_batch(CREATE_METRICS_TABLE)
+                .expect("execute_batch");
             println!("{}: cache [{}]", command, cache_file);
         }
-
-        db_conn
-            .execute_batch(CREATE_METRICS_TABLE)
-            .expect("execute_batch");
 
         let mut table_list: Vec<Box<dyn TableTrait>> = Vec::new();
         table_list.push(Box::new(appid));
@@ -158,10 +159,14 @@ impl AggregationProcessor {
         table_list.push(Box::new(vlan));
         table_list.push(Box::new(vpn));
 
+        let mut input_list = Vec::<String>::new();
+        input_list.push(input.to_string());
+        let mut output_list = Vec::<String>::new();
+        output_list.push(output.to_string());
         Ok(Self {
             command: command.to_string(),
-            input: input.to_string(),
-            output: output.to_string(),
+            input_list: input_list,
+            output_list: output_list,
             pass: pass.to_string(),
             interval: interval,
             extension: extension_string.to_string(),
@@ -179,17 +184,23 @@ impl FileProcessor for AggregationProcessor {
     fn get_command(&self) -> &String {
         &self.command
     }
-    fn get_input(&self) -> &String {
-        &self.input
+
+    fn get_input(&self, input_list: &mut Vec<String>) -> Result<(), Error> {
+        *input_list = self.input_list.clone();
+        Ok(())
     }
-    fn get_output(&self) -> &String {
-        &self.output
+    fn get_output(&self, output_list: &mut Vec<String>) -> Result<(), Error> {
+        *output_list = self.output_list.clone();
+        Ok(())
     }
     fn get_pass(&self) -> &String {
         &self.pass
     }
     fn get_interval(&self) -> &Interval {
         &self.interval
+    }
+    fn get_stream_id(&self) -> u32 {
+        StreamType::IPFIX as u32
     }
     fn get_file_extension(&self) -> &String {
         &self.extension
@@ -200,8 +211,8 @@ impl FileProcessor for AggregationProcessor {
     fn delete_files(&self) -> bool {
         return true;
     }
-    fn process(&mut self, file_list: &Vec<String>, _schema_type: FileType) -> Result<(), Error> {
-        // Use iterator and join for file list formatting
+    fn process(&mut self, file_list: &Vec<String>) -> Result<(), Error> {
+
         let parquet_list = file_list
             .iter()
             .map(|file| format!("'{}'", file))
@@ -209,9 +220,24 @@ impl FileProcessor for AggregationProcessor {
             .join(",");
         let parquet_list = format!("[{}]", parquet_list);
 
+        // Check if the parquet files are valid
+        // If not, skip processing
+        // This is a performance optimization to avoid processing invalid files
+        // If the files are not valid, we will not be able to read them
+        // and will end up with an empty table
+        if let Ok(status) = check_parquet_stream(&parquet_list) {
+            if status == false {
+                eprintln!(
+                    "{}: invalid stream of parquet files, skipping",
+                    self.command
+                );
+                return Ok(());
+            }
+        }
+
         let mem_source = duckdb_open_memory(2);
         let sql_command = format!(
-            "CREATE TABLE memtable AS SELECT * FROM read_parquet({});",
+            "CREATE TABLE flow AS SELECT * FROM read_parquet({});",
             parquet_list
         );
         mem_source
@@ -230,11 +256,12 @@ impl FileProcessor for AggregationProcessor {
                     format!("DuckDB appender error: {}", e),
                 )
             })?;
+
             for table in &self.table_list {
                 table.insert(&mem_source, &mut cache_appender);
             }
             let _ = cache_appender.flush();
-            let tmp_parquet = ".gnat_metrics.parquet";
+            let tmp_parquet = format!("{}/.gnat_metrics.parquet", self.output_list[0]);
             let sql_copy = format!(
                 "COPY metrics TO '{}' (FORMAT parquet, COMPRESSION zstd);",
                 tmp_parquet
@@ -248,7 +275,7 @@ impl FileProcessor for AggregationProcessor {
                 "CREATE TABLE IF NOT EXISTS metrics AS SELECT * FROM read_parquet('{}')",
                 tmp_parquet
             );
-  
+
             self.db_conn.execute_batch(&sql_export).map_err(|e| {
                 Error::new(std::io::ErrorKind::Other, format!("DuckDB error: {}", e))
             })?;
@@ -292,7 +319,7 @@ impl FileProcessor for AggregationProcessor {
             let sql_command = format!("COPY (SELECT *, year(bucket) AS year, month(bucket) AS month, day(bucket) AS day FROM metrics)
                    TO '{}' 
                    (FORMAT parquet, COMPRESSION zstd, ROW_GROUP_SIZE 100_000, PARTITION_BY (year, month, day), 
-                   OVERWRITE_OR_IGNORE,FILENAME_PATTERN 'gnat-{}-{}.{{i}}');", self.output, self.command, self.dtg_format);
+                   OVERWRITE_OR_IGNORE,FILENAME_PATTERN 'gnat-{}-{}.{{i}}');", self.output_list[0], self.command, self.dtg_format);
 
             self.db_conn.execute_batch(&sql_command).map_err(|e| {
                 Error::new(std::io::ErrorKind::Other, format!("DuckDB error: {}", e))

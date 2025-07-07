@@ -1,7 +1,8 @@
-use crate::model::table::TableTrait;
 use crate::model::table::MetricRecord;
+use crate::model::table::TableTrait;
+use crate::pipeline::StreamType;
+use chrono::{TimeZone, Utc};
 use duckdb::{params, Appender};
-use chrono::{Utc,TimeZone};
 
 pub struct FlowTable {
     pub table_name: &'static str,
@@ -14,14 +15,14 @@ impl TableTrait for FlowTable {
 
     fn insert(&self, source: &duckdb::Connection, sink: &mut Appender) {
         //
-        // query DuckDB memtable
+        // query DuckDB flow
         //
         let mut stmt = source
             .prepare(
                 "SELECT time_bucket (INTERVAL '1' minute, stime) as bucket,
                                             observe,
                                             count() 
-                                        FROM memtable 
+                                        FROM flow 
                                         GROUP BY all 
                                         ORDER BY all;",
             )
@@ -30,6 +31,7 @@ impl TableTrait for FlowTable {
         let record_iter = stmt
             .query_map([], |row| {
                 Ok(MetricRecord {
+                    stream: StreamType::TELEMETRY as u32,
                     bucket: row.get(0).expect("missing bucket"),
                     observe: row.get(1).expect("missing observ"),
                     name: "flow".to_string(),
@@ -39,25 +41,26 @@ impl TableTrait for FlowTable {
             })
             .unwrap();
 
-            let mut count = 0;
-            for r in record_iter {
-                let record = r.unwrap();
-    
-                let ts = Utc
-                    .timestamp_opt((record.bucket / 1_000_000) as i64, 0)
-                    .unwrap();
-                sink.append_row(params![
-                    ts.to_rfc3339(),
-                    record.observe,
-                    record.name,
-                    record.key,
-                    record.value
-                ])
+        let mut count = 0;
+        for r in record_iter {
+            let record = r.unwrap();
+
+            let ts = Utc
+                .timestamp_opt((record.bucket / 1_000_000) as i64, 0)
                 .unwrap();
-                count += 1;
-            }
-            if count > 0 {
-                println!("\t[{}:{}]", self.table_name, count);
-            }
+            sink.append_row(params![
+                record.stream,
+                ts.to_rfc3339(),
+                record.observe,
+                record.name,
+                record.key,
+                record.value
+            ])
+            .unwrap();
+            count += 1;
+        }
+        if count > 0 {
+            println!("\t[{}:{}]", self.table_name, count);
+        }
     }
 }

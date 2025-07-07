@@ -1,5 +1,6 @@
-use crate::model::table::TableTrait;
 use crate::model::table::MetricRecord;
+use crate::model::table::TableTrait;
+use crate::pipeline::StreamType;
 use chrono::{TimeZone, Utc};
 use duckdb::{params, Appender};
 
@@ -14,7 +15,7 @@ impl TableTrait for ProtoTable {
 
     fn insert(&self, source: &duckdb::Connection, sink: &mut Appender) {
         //
-        // query DuckDB memtable
+        // query DuckDB flow
         //
         let mut stmt = source
             .prepare(
@@ -22,7 +23,7 @@ impl TableTrait for ProtoTable {
                                             observe,
                                             proto,
                                             count() 
-                                        FROM memtable 
+                                        FROM flow 
                                         GROUP BY all 
                                         ORDER BY all;",
             )
@@ -31,6 +32,7 @@ impl TableTrait for ProtoTable {
         let record_iter = stmt
             .query_map([], |row| {
                 Ok(MetricRecord {
+                    stream: StreamType::TELEMETRY as u32,
                     bucket: row.get(0).expect("missing bucket"),
                     observe: row.get(1).expect("missing observ"),
                     name: "proto".to_string(),
@@ -48,6 +50,7 @@ impl TableTrait for ProtoTable {
                 .timestamp_opt((record.bucket / 1_000_000) as i64, 0)
                 .unwrap();
             sink.append_row(params![
+                record.stream,
                 ts.to_rfc3339(),
                 record.observe,
                 record.name,

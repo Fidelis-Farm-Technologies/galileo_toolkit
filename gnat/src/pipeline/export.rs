@@ -7,22 +7,22 @@
  */
 
 use crate::pipeline::FIELDS;
-use crate::utils::duckdb::{duckdb_open, duckdb_open_memory, duckdb_open_readonly};
-use chrono::{DateTime, TimeZone, Utc};
-use std::time::SystemTime;
+use crate::utils::duckdb::duckdb_open_memory;
+use chrono::{DateTime, Utc};
 
+use crate::pipeline::check_parquet_stream;
+use crate::pipeline::load_environment;
 use crate::pipeline::parse_interval;
 use crate::pipeline::parse_options;
 use crate::pipeline::FileProcessor;
-use crate::pipeline::FileType;
 use crate::pipeline::Interval;
-use duckdb::Connection;
+use crate::pipeline::StreamType;
 use std::io::Error;
 
 pub struct ExportProcessor {
     pub command: String,
-    pub input: String,
-    pub output: String,
+    pub input_list: Vec<String>,
+    pub output_list: Vec<String>,
     pub pass: String,
     pub field_list: String,
     pub interval: Interval,
@@ -40,6 +40,7 @@ impl ExportProcessor {
         extension_string: &str,
         options_string: &str,
     ) -> Result<Self, Error> {
+        let _ = load_environment();
         let interval = parse_interval(interval_string);
         let mut options = parse_options(options_string);
         options.entry("format").or_insert("json");
@@ -56,7 +57,6 @@ impl ExportProcessor {
         let list: Vec<String> = field_list.split(",").map(str::to_string).collect();
         for field in &list {
             if !FIELDS.contains(&field.as_str()) {
-                let error_message = format!("invalid field: {}", field);
                 return Err(Error::other("field list contains invalid field"));
             }
         }
@@ -69,10 +69,14 @@ impl ExportProcessor {
             }
         }
 
+        let mut input_list = Vec::<String>::new();
+        input_list.push(input.to_string());
+        let mut output_list = Vec::<String>::new();
+        output_list.push(output.to_string());
         Ok(Self {
             command: command.to_string(),
-            input: input.to_string(),
-            output: output.to_string(),
+            input_list: input_list,
+            output_list: output_list,
             pass: pass.to_string(),
             field_list: field_list.to_string(),
             interval: interval,
@@ -85,17 +89,22 @@ impl FileProcessor for ExportProcessor {
     fn get_command(&self) -> &String {
         &self.command
     }
-    fn get_input(&self) -> &String {
-        &self.input
+    fn get_input(&self, input_list: &mut Vec<String>) -> Result<(), Error> {
+        *input_list = self.input_list.clone();
+        Ok(())
     }
-    fn get_output(&self) -> &String {
-        &self.output
+    fn get_output(&self, output_list: &mut Vec<String>) -> Result<(), Error> {
+        *output_list = self.output_list.clone();
+        Ok(())
     }
     fn get_pass(&self) -> &String {
         &self.pass
     }
     fn get_interval(&self) -> &Interval {
         &self.interval
+    }
+    fn get_stream_id(&self) -> u32 {
+        StreamType::ADHOC as u32
     }
     fn get_file_extension(&self) -> &String {
         &self.extension
@@ -107,20 +116,36 @@ impl FileProcessor for ExportProcessor {
     fn delete_files(&self) -> bool {
         true
     }
-    fn process(&mut self, file_list: &Vec<String>, _schema_type: FileType) -> Result<(), Error> {
-        let conn = duckdb_open_memory(2);
+    fn process(&mut self, file_list: &Vec<String>) -> Result<(), Error> {
+        let parquet_list = file_list
+            .iter()
+            .map(|file| format!("'{}'", file))
+            .collect::<Vec<_>>()
+            .join(",");
+        let parquet_list = format!("[{}]", parquet_list);
 
-        let mut parquet_list = String::from("[");
-        for file in file_list.clone().into_iter() {
-            parquet_list.push('\'');
-            parquet_list.push_str(&file);
-            parquet_list.push_str("',");
+        // Check if the parquet files are valid
+        // If not, skip processing
+        // This is a performance optimization to avoid processing invalid files
+        // If the files are not valid, we will not be able to read them
+        // and will end up with an empty table
+        if let Ok(status) = check_parquet_stream(&parquet_list) {
+            if status == false {
+                eprintln!(
+                    "{}: invalid stream of parquet files, skipping",
+                    self.command
+                );
+                return Ok(());
+            }
         }
-        parquet_list.push(']');
 
+        let conn = duckdb_open_memory(2);
         let current_utc: DateTime<Utc> = Utc::now();
         let rfc3339_name: String = current_utc.to_rfc3339();
-        let output_file = format!("{}/gnat-{}-{}", self.output, self.command, rfc3339_name);
+        let output_file = format!(
+            "{}/gnat-{}-{}",
+            self.output_list[0], self.command, rfc3339_name
+        );
 
         let sql_command: String;
         match self.format.as_str() {
@@ -145,6 +170,7 @@ impl FileProcessor for ExportProcessor {
         }
 
         conn.execute_batch(&sql_command).expect("execute_batch");
+        conn.close().expect("db close");
         println!("exported: {} => {}", parquet_list, output_file);
 
         Ok(())

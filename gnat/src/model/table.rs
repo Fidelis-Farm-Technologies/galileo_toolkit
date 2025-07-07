@@ -15,7 +15,7 @@ pub mod ssh;
 pub mod vlan;
 pub mod vpn;
 
-use duckdb::types::Value;
+//use duckdb::types::Value;
 
 #[derive(Debug)]
 pub struct FeatureSummaryRecord {
@@ -62,6 +62,8 @@ pub struct HbosSummaryRecord {
     pub low: f64,
     pub medium: f64,
     pub high: f64,
+    pub severe: f64,
+    pub filter: String,
 }
 
 #[derive(Debug)]
@@ -76,8 +78,20 @@ pub struct ParquetHistogramSummaryTable {
     pub q25: f64,
     pub q50: f64,
     pub q75: f64,
-    pub count: i64,
+    pub count: usize,
     pub null_percent: f64,
+}
+
+#[derive(Debug)]
+pub struct HistogramDoubleValue {
+    pub boundary: f64,
+    pub frequency: usize,
+}
+
+#[derive(Debug)]
+pub struct HistogramIntegerValue {
+    pub boundary: i64,
+    pub frequency: usize,
 }
 
 #[derive(Debug)]
@@ -143,9 +157,10 @@ pub struct HistogramSummaryTable {
     pub proto: String,
     pub name: String,
     pub histogram: String,
-    pub count: u64,
+    pub count: usize,
     pub hash_size: u64,
-    pub bin_count: u64,
+    pub bin_count: usize,
+    pub filter: String,
 }
 
 #[derive(Debug)]
@@ -224,6 +239,7 @@ pub trait TableTrait {
 }
 pub static CREATE_METRICS_TABLE: &str = "CREATE TABLE IF NOT EXISTS metrics
 (
+    stream UINTEGER,
     bucket TIMESTAMP,
     observe VARCHAR,
     name VARCHAR,
@@ -233,6 +249,7 @@ pub static CREATE_METRICS_TABLE: &str = "CREATE TABLE IF NOT EXISTS metrics
 
 #[derive(Debug)]
 pub struct MetricRecord {
+    pub stream: u32,
     pub bucket: u64,
     pub observe: String,
     pub name: String,
@@ -242,7 +259,7 @@ pub struct MetricRecord {
 
 #[derive(Debug)]
 pub struct MemFlowRecord {
-    pub version: u32,
+    pub stream: u32,
     pub id: String,
     pub observe: String,
     pub stime: u64,
@@ -298,7 +315,7 @@ pub struct MemFlowRecord {
     pub orient: String,
     //pub tag: Vec<String>,
     pub hbos_score: f64,
-    pub hbos_severity: u8,    
+    pub hbos_severity: u8,
     //pub hbos_map: Vec<(String, f64)>,
     pub appid: String,
     pub category: String,

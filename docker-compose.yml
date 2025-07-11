@@ -1,0 +1,42 @@
+services:
+  gnat_sensor:
+      image: fidelismachine/galileo_toolkit:latest
+      container_name: gnat_sensor
+      restart: unless-stopped
+      network_mode: host
+      cap_add:
+        - net_admin
+        - net_raw
+        - sys_nice
+      environment:
+        GNAT_INTERFACE: ${GNAT_INTERFACE}
+        GNAT_OBSERVATION_TAG: ${GNAT_OBSERVATION_TAG}
+        GNAT_OUTPUT_DIR: /var/spool/${GNAT_OBSERVATION_TAG}
+        GNAT_EXPORT_INTERVAL: 20
+      volumes:
+        - /var/spool/gnat:/var/spool
+      command: /opt/gnat/scripts/entrypoint-gnat_sensor.sh
+
+  gnat_import:
+      image: fidelismachine/galileo_toolkit:latest
+      container_name: gnat_import
+      restart: unless-stopped
+      environment:  
+        GNAT_INPUT_DIR: /var/spool/${GNAT_OBSERVATION_TAG}
+        GNAT_OUTPUT_DIR: /var/spool/import
+      volumes:
+        - /var/spool/gnat:/var/spool
+      command: /opt/gnat/scripts/entrypoint-gnat_import.sh
+
+  gnat_store:
+      image: fidelismachine/galileo_toolkit:latest
+      container_name: gnat_store
+      restart: unless-stopped
+      environment:
+        GNAT_INPUT_DIR: /var/spool/import
+        GNAT_OUTPUT_DIR: /var/flow
+        TZ: UTC
+      volumes:
+        - /var/flow:/var/flow
+        - /var/spool/gnat:/var/spool
+      command: /opt/gnat/scripts/entrypoint-gnat_store.sh

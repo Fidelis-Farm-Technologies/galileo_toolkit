@@ -14,18 +14,18 @@ services:
         GNAT_OUTPUT_DIR: /var/spool/${GNAT_OBSERVATION_TAG}
         GNAT_EXPORT_INTERVAL: 20
       volumes:
-        - /var/spool/gnat:/var/spool
+        - ./var/spool/gnat:/var/spool
       command: /opt/gnat/scripts/entrypoint-gnat_sensor.sh
 
   gnat_import:
       image: fidelismachine/galileo_toolkit:latest
       container_name: gnat_import
       restart: unless-stopped
-      environment:  
+      environment:
         GNAT_INPUT_DIR: /var/spool/${GNAT_OBSERVATION_TAG}
         GNAT_OUTPUT_DIR: /var/spool/import
       volumes:
-        - /var/spool/gnat:/var/spool
+        - ./var/spool/gnat:/var/spool
       command: /opt/gnat/scripts/entrypoint-gnat_import.sh
 
   gnat_store:
@@ -36,7 +36,8 @@ services:
         GNAT_INPUT_DIR: /var/spool/import
         GNAT_OUTPUT_DIR: /var/flow
         TZ: UTC
+        GNAT_INTERVAL: 30
       volumes:
-        - /var/flow:/var/flow
-        - /var/spool/gnat:/var/spool
+        - ./var/flow:/var/flow
+        - ./var/spool/gnat:/var/spool
       command: /opt/gnat/scripts/entrypoint-gnat_store.sh

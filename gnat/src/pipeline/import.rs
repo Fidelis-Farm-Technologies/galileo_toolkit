@@ -46,7 +46,7 @@ impl ImportProcessor {
         options.entry("country").or_insert("");
         for (key, value) in &options {
             if !value.is_empty() {
-                println!("{}: [{}={}]", command, key, value);
+                println!("{}: [{}=>{}]", command, key, value);
             }
         }
 

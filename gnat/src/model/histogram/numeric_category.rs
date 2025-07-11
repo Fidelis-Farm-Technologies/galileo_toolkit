@@ -10,6 +10,7 @@ use crate::model::histogram::HistogramType::*;
 use crate::model::histogram::*;
 use crate::model::table::NumericCategoryRecord;
 use crate::model::table::{HistogramSummaryTable, NumericHistogramTable};
+use std::io::Error;
 
 use crate::model::table::MemFlowRecord;
 use duckdb::{params, Appender, Connection, DropBehavior};
@@ -35,7 +36,13 @@ impl NumericCategoryHistogram {
         }
     }
 
-    fn serialize_summary(&self, appender: &mut Appender, observe: &str, vlan: i64, proto: &str) {
+    fn serialize_summary(
+        &self,
+        appender: &mut Appender,
+        observe: &str,
+        vlan: i64,
+        proto: &str,
+    ) -> Result<(), Error> {
         appender
             .append_row(params![
                 observe,
@@ -49,8 +56,16 @@ impl NumericCategoryHistogram {
                 self.filter
             ])
             .unwrap();
+
+        Ok(())
     }
-    fn serialize_histogram(&self, appender: &mut Appender, observe: &str, vlan: i64, proto: &str) {
+    fn serialize_histogram(
+        &self,
+        appender: &mut Appender,
+        observe: &str,
+        vlan: i64,
+        proto: &str,
+    ) -> Result<(), Error> {
         println!(
             "{}: serializing [{}/{}/{}/{}]...",
             self.name, observe, vlan, proto, self.name
@@ -60,6 +75,7 @@ impl NumericCategoryHistogram {
                 .append_row(params![observe, vlan, proto, self.name, hash_bin, value])
                 .unwrap();
         }
+        Ok(())
     }
     fn add(&mut self, value: i64) {
         let mut key = value;
@@ -106,18 +122,30 @@ impl NumericCategoryHistogram {
         }
         Ok(())
     }
-    pub fn serialize(&self, conn: &mut Connection, observe: &str, vlan: i64, proto: &str) {
+    pub fn serialize(
+        &self,
+        conn: &mut Connection,
+        observe: &str,
+        vlan: i64,
+        proto: &str,
+    ) -> Result<(), Error> {
         conn.execute_batch(HISTOGRAM_SUMMARY).unwrap();
         conn.execute_batch(HISTOGRAM_NUMERIC_CATEGORY).unwrap();
 
         let mut tx = conn.transaction().unwrap();
         tx.set_drop_behavior(DropBehavior::Commit);
 
-        let mut appender: Appender = tx.appender("histogram_summary").unwrap();
-        self.serialize_summary(&mut appender, observe, vlan, proto);
+        let mut appender: Appender = tx
+            .appender("histogram_summary")
+            .map_err(|e| Error::new(std::io::ErrorKind::Other, format!("DuckDB error: {}", e)))?;
+        let _ = self.serialize_summary(&mut appender, observe, vlan, proto);
 
-        let mut appender: Appender = tx.appender("histogram_numeric_category").unwrap();
-        self.serialize_histogram(&mut appender, observe, vlan, proto);
+        let mut appender: Appender = tx
+            .appender("histogram_numeric_category")
+            .map_err(|e| Error::new(std::io::ErrorKind::Other, format!("DuckDB error: {}", e)))?;
+        let _ = self.serialize_histogram(&mut appender, observe, vlan, proto);
+
+        Ok(())
     }
     pub fn load(
         db: &Connection,

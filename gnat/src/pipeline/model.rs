@@ -70,7 +70,7 @@ impl ModelProcessor {
 
         for (key, value) in &options {
             if !value.is_empty() {
-                println!("{}: [{}={}]", command, key, value);
+                println!("{}: [{}=>{}]", command, key, value);
             }
         }
         let mut filter = options.get("filter").expect("expected filter").to_string();

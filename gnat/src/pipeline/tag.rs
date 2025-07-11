@@ -77,7 +77,7 @@ impl TagProcessor {
         let options = parse_options(options_string);
         for (key, value) in &options {
             if !value.is_empty() {
-                println!("{}: [{}={}]", command, key, value);
+                println!("{}: [{}=>{}]", command, key, value);
             }
         }
         let rule_file = options.get("tag").expect("expected tag file").to_string();

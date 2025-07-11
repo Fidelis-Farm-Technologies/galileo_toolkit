@@ -40,6 +40,7 @@ pub mod pipeline {
     const MAX_BATCH: usize = 128;
 
     pub mod aggregate;
+    pub mod cache;
     pub mod collector;
     pub mod export;
     pub mod hbos;
@@ -509,6 +510,11 @@ pub mod pipeline {
             println!("{}: starting up.", command);
 
             loop {
+                if !sleep_interval(&interval) {
+                    println!("{}: shutting down.", command);
+                    return Ok(());
+                }
+
                 let start = Instant::now();
                 let mut total_files_processed = 0;
                 // process all input directories
@@ -526,11 +532,7 @@ pub mod pipeline {
                         start.elapsed()
                     );
                 }
-
-                if !sleep_interval(&interval) {
-                    println!("{}: shutting down.", command);
-                    return Ok(());
-                }
+               
             }
         }
     }

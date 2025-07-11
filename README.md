@@ -10,7 +10,7 @@ Galileo embraces the core principle of building Unix command-line interfaces (CL
 
 ## Use Cases
 
-Galileo is particularly well-suited for security operations centers (SOCs), managed security service providers (MSSPs), and security teams looking to enhance their threat detection capabilities. The stack supports near real-time monitoring, historical data analysis, and proactive threat hunting initiatives, making it valuable for both reactive and proactive security measures.
+Galileo is particularly well-suited for security operations centers (SOCs), managed security service providers (MSSPs), and security teams looking to enhance their threat detection capabilities. The stack supports near real-time monitoring, historical data analysis, and proactive threat hunting initiatives, making it ideal for both reactive and proactive security measures.
 
 ## Additonal Information
 

@@ -8,12 +8,12 @@
 use crate::model::histogram::HistogramType;
 use crate::model::histogram::HistogramType::*;
 use crate::model::histogram::*;
+use crate::model::table::MemFlowRecord;
 use crate::model::table::TimeCategoryRecord;
 use crate::model::table::{HistogramSummaryTable, TimeHistogramTable};
-
-use crate::model::table::MemFlowRecord;
 use chrono::prelude::*;
 use chrono::{TimeZone, Utc};
+use std::io::Error;
 
 use duckdb::{params, Appender, Connection, DropBehavior};
 use std::collections::HashMap;
@@ -36,7 +36,13 @@ impl TimeCategoryHistogram {
         }
     }
 
-    fn serialize_summary(&self, appender: &mut Appender, observe: &str, vlan: i64, proto: &str) {
+    fn serialize_summary(
+        &self,
+        appender: &mut Appender,
+        observe: &str,
+        vlan: i64,
+        proto: &str,
+    ) -> Result<(), Error> {
         appender
             .append_row(params![
                 observe,
@@ -49,9 +55,17 @@ impl TimeCategoryHistogram {
                 0,
                 self.filter
             ])
-            .unwrap();
+            .map_err(|e| Error::new(std::io::ErrorKind::Other, format!("DuckDB error: {}", e)))?;
+
+        Ok(())
     }
-    fn serialize_histogram(&self, appender: &mut Appender, observe: &str, vlan: i64, proto: &str) {
+    fn serialize_histogram(
+        &self,
+        appender: &mut Appender,
+        observe: &str,
+        vlan: i64,
+        proto: &str,
+    ) -> Result<(), Error> {
         println!(
             "{}: serializing [{}/{}/{}/{}]...",
             self.name, observe, vlan, proto, self.name
@@ -59,8 +73,12 @@ impl TimeCategoryHistogram {
         for (hash_bin, value) in &self.map {
             appender
                 .append_row(params![observe, vlan, proto, self.name, hash_bin, value])
-                .unwrap();
+                .map_err(|e| {
+                    Error::new(std::io::ErrorKind::Other, format!("DuckDB error: {}", e))
+                })?;
         }
+
+        Ok(())
     }
     fn add(&mut self, epoch_micros: u64) {
         let dt = Utc
@@ -114,16 +132,27 @@ impl TimeCategoryHistogram {
         }
         Ok(())
     }
-    pub fn serialize(&self, conn: &mut Connection, observe: &str, vlan: i64, proto: &str) {
+    pub fn serialize(
+        &self,
+        conn: &mut Connection,
+        observe: &str,
+        vlan: i64,
+        proto: &str,
+    ) -> Result<(), Error> {
         conn.execute_batch(HISTOGRAM_SUMMARY).unwrap();
         conn.execute_batch(HISTOGRAM_TIME_CATEGORY).unwrap();
 
         let mut tx = conn.transaction().unwrap();
         tx.set_drop_behavior(DropBehavior::Commit);
-        let mut appender: Appender = tx.appender("histogram_summary").unwrap();
-        self.serialize_summary(&mut appender, observe, vlan, proto);
-        let mut appender: Appender = tx.appender("histogram_time_category").unwrap();
-        self.serialize_histogram(&mut appender, observe, vlan, proto);
+        let mut appender: Appender = tx
+            .appender("histogram_summary")
+            .map_err(|e| Error::new(std::io::ErrorKind::Other, format!("DuckDB error: {}", e)))?;
+        let _ = self.serialize_summary(&mut appender, observe, vlan, proto);
+        let mut appender: Appender = tx
+            .appender("histogram_time_category")
+            .map_err(|e| Error::new(std::io::ErrorKind::Other, format!("DuckDB error: {}", e)))?;
+        let _ = self.serialize_histogram(&mut appender, observe, vlan, proto);
+        Ok(())
     }
     pub fn load(
         db: &Connection,

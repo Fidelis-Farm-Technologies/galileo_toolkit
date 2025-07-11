@@ -53,7 +53,7 @@ impl SplitProcessor {
 
         for (key, value) in &options {
             if !value.is_empty() {
-                println!("{}: [{}={}]", command, key, value);
+                println!("{}: [{}=>{}]", command, key, value);
             }
         }
 

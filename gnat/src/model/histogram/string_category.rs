@@ -7,12 +7,12 @@
  */
 use crate::model::histogram::*;
 use crate::model::histogram::{HistogramType, HistogramType::StringCategory};
+use crate::model::table::MemFlowRecord;
 use crate::model::table::StringCategoryRecord;
 use crate::model::table::{HistogramSummaryTable, StringHistogramTable};
-
-use crate::model::table::MemFlowRecord;
 use duckdb::{params, Appender, Connection, DropBehavior};
 use std::collections::HashMap;
+use std::io::Error;
 
 #[derive(Debug)]
 pub struct StringCategoryHistogram {
@@ -31,7 +31,13 @@ impl StringCategoryHistogram {
             map: HashMap::new(),
         }
     }
-    fn serialize_summary(&self, appender: &mut Appender, observe: &str, vlan: i64, proto: &str) {
+    fn serialize_summary(
+        &self,
+        appender: &mut Appender,
+        observe: &str,
+        vlan: i64,
+        proto: &str,
+    ) -> Result<(), Error> {
         appender
             .append_row(params![
                 observe,
@@ -44,9 +50,17 @@ impl StringCategoryHistogram {
                 0,
                 self.filter
             ])
-            .unwrap();
+            .map_err(|e| Error::new(std::io::ErrorKind::Other, format!("DuckDB error: {}", e)))?;
+
+        Ok(())
     }
-    fn serialize_histogram(&self, appender: &mut Appender, observe: &str, vlan: i64, proto: &str) {
+    fn serialize_histogram(
+        &self,
+        appender: &mut Appender,
+        observe: &str,
+        vlan: i64,
+        proto: &str,
+    ) -> Result<(), Error> {
         println!(
             "{}: serializing [{}/{}/{}/{}]...",
             self.name, observe, vlan, proto, self.name
@@ -55,8 +69,11 @@ impl StringCategoryHistogram {
             //let normalized = *value / self.dport.count as u64;
             appender
                 .append_row(params![observe, vlan, proto, self.name, key, value])
-                .unwrap();
+                .map_err(|e| {
+                    Error::new(std::io::ErrorKind::Other, format!("DuckDB error: {}", e))
+                })?;
         }
+        Ok(())
     }
     fn add(&mut self, key: &str) {
         let value = self.map.entry(key.to_string()).or_insert(0);
@@ -105,16 +122,28 @@ impl StringCategoryHistogram {
         }
         Ok(())
     }
-    pub fn serialize(&self, conn: &mut Connection, observe: &str, vlan: i64, proto: &str) {
+    pub fn serialize(
+        &self,
+        conn: &mut Connection,
+        observe: &str,
+        vlan: i64,
+        proto: &str,
+    ) -> Result<(), Error> {
         conn.execute_batch(HISTOGRAM_SUMMARY).unwrap();
         conn.execute_batch(HISTOGRAM_STRING_CATEGORY).unwrap();
 
         let mut tx = conn.transaction().unwrap();
         tx.set_drop_behavior(DropBehavior::Commit);
-        let mut appender: Appender = tx.appender("histogram_summary").unwrap();
-        self.serialize_summary(&mut appender, observe, vlan, proto);
-        let mut appender: Appender = tx.appender("histogram_string_category").unwrap();
-        self.serialize_histogram(&mut appender, observe, vlan, proto);
+        let mut appender: Appender = tx
+            .appender("histogram_summary")
+            .map_err(|e| Error::new(std::io::ErrorKind::Other, format!("DuckDB error: {}", e)))?;
+        let _ = self.serialize_summary(&mut appender, observe, vlan, proto);
+        let mut appender: Appender = tx
+            .appender("histogram_string_category")
+            .map_err(|e| Error::new(std::io::ErrorKind::Other, format!("DuckDB error: {}", e)))?;
+        let _ = self.serialize_histogram(&mut appender, observe, vlan, proto);
+
+        Ok(())
     }
 
     pub fn load(

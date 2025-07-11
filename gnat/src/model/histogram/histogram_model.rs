@@ -56,23 +56,23 @@ pub struct HistogramModels {
 impl HistogramModels {
     pub fn serialize(&self, conn: &mut Connection) -> Result<(), Error> {
         for (_name, histogram) in &self.numerical {
-            histogram.serialize(conn, &self.observe, self.vlan, &self.proto);
+            let _ = histogram.serialize(conn, &self.observe, self.vlan, &self.proto);
         }
 
         for (_name, histogram) in &self.numeric_category {
-            histogram.serialize(conn, &self.observe, self.vlan, &self.proto);
+            let _ = histogram.serialize(conn, &self.observe, self.vlan, &self.proto);
         }
 
         for (_name, histogram) in &self.string_category {
-            histogram.serialize(conn, &self.observe, self.vlan, &self.proto);
+            let _ = histogram.serialize(conn, &self.observe, self.vlan, &self.proto);
         }
 
         for (_name, histogram) in &self.ipaddr_category {
-            histogram.serialize(conn, &self.observe, self.vlan, &self.proto);
+            let _ = histogram.serialize(conn, &self.observe, self.vlan, &self.proto);
         }
 
         for (_name, histogram) in &self.time_category {
-            histogram.serialize(conn, &self.observe, self.vlan, &self.proto);
+            let _ = histogram.serialize(conn, &self.observe, self.vlan, &self.proto);
         }
         Ok(())
     }
@@ -559,7 +559,7 @@ impl HistogramModels {
     pub fn summarize(
         &mut self,
         parquet_conn: &mut Connection,
-        db_conn: &mut Connection
+        db_conn: &mut Connection,
     ) -> Result<(), Error> {
         let mut score_conn = duckdb_open_memory(2);
 
@@ -766,7 +766,6 @@ impl HistogramModels {
         feature_list: &Vec<String>,
         filter: &str,
     ) -> Result<(), duckdb::Error> {
-        
         self.filter = filter.to_string();
         for feature in feature_list {
             match feature.as_str() {

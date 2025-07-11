@@ -1,14 +1,14 @@
 #!/bin/bash
 
-if [ -z "${GNAT_OUTPUT_DIR}" ]; then
-    GNAT_OUTPUT_DIR=/var/spool/${GNAT_OBSERVATION_TAG}
+if [ -z "${GNAT_OUTPUT}" ]; then
+    GNAT_OUTPUT=/var/spool/${GNAT_OBSERVATION_TAG}
 fi
 
-if [ ! -d  "${GNAT_OUTPUT_DIR}" ]; then
-    mkdir -p ${GNAT_OUTPUT_DIR}
+if [ ! -d  "${GNAT_OUTPUT}" ]; then
+    mkdir -p ${GNAT_OUTPUT}
 fi
 
-for file in ${GNAT_OUTPUT_DIR}/*.lock; do
+for file in ${GNAT_OUTPUT}/*.lock; do
   if [ -f "$file" ]; then
     echo "removing $file"
     rm $file
@@ -31,8 +31,7 @@ if [ -z "${GNAT_EXPORT_INTERVAL}" ]; then
 fi
 
 if [ -z "${GNAT_OPTIONS}" ]; then
-    GNAT_OPTIONS="--entropy --ndpi --verbose  --mac --max-payload=8192 --flow-stats --no-template-metadata --no-element-metadata --no-tombstone --active-timeout 180 --idle-timeout 60 --out ${GNAT_OUTPUT_DIR}/${GNAT_OBSERVATION_TAG} --lock"
-    # GNAT_OPTIONS="--entropy --ndpi --verbose --max-payload=2048 --flow-stats --mac --active-timeout 180 --idle-timeout 60 --out ${GNAT_OUTPUT_DIR}/${GNAT_OBSERVATION_TAG} --lock"
+    GNAT_OPTIONS="--entropy --ndpi --verbose  --mac --max-payload=8192 --flow-stats --no-template-metadata --no-element-metadata --no-tombstone --active-timeout 180 --idle-timeout 60 --out ${GNAT_OUTPUT}/${GNAT_OBSERVATION_TAG} --lock"
 fi
 
 export LTDL_LIBRARY_PATH=/opt/gnat/lib/yaf

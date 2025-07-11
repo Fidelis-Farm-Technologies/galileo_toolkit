@@ -7,14 +7,20 @@
  * See license information in LICENSE.
  */
 
+use crate::model::histogram::MD_FLOW_TABLE;
 use crate::pipeline::check_parquet_stream;
 use crate::pipeline::load_environment;
 use crate::pipeline::parse_interval;
 use crate::pipeline::parse_options;
 use crate::pipeline::FileProcessor;
 
+use crate::utils::duckdb::duckdb_open;
+
 use crate::pipeline::Interval;
 use crate::pipeline::StreamType;
+use chrono::DateTime;
+use chrono::Utc;
+use duckdb::Connection;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
@@ -26,16 +32,18 @@ pub struct InputJsonStructure {
     input: String,
 }
 
-pub struct MergeProcessor {
+pub struct CacheProcessor {
     pub command: String,
     pub input_list: Vec<String>,
     pub output_list: Vec<String>,
     pub pass: String,
     pub interval: Interval,
     pub extension: String,
+    pub retention: u16,
+    pub db_conn: Connection,
 }
 
-impl MergeProcessor {
+impl CacheProcessor {
     pub fn new(
         command: &str,
         input: &str,
@@ -47,22 +55,28 @@ impl MergeProcessor {
     ) -> Result<Self, Error> {
         let _ = load_environment();
         let interval = parse_interval(interval_string);
-        let options = parse_options(options_string);
-
+        let mut options = parse_options(options_string);
+        options.entry("retention").or_insert("0");
         for (key, value) in &options {
             if !value.is_empty() {
                 println!("{}: [{}=>{}]", command, key, value);
             }
         }
-
-        if !Path::new(input).is_file() {
-            return Err(Error::other("input is not a JSON file"));
-        }
-
+        let retention = options
+            .get("retention")
+            .expect("expected retention")
+            .parse::<u16>()
+            .unwrap();
         let mut input_list = Vec::<String>::new();
-        Self::load_json_file(input, &mut input_list)?;
+        input_list.push(input.to_string());
         let mut output_list = Vec::<String>::new();
         output_list.push(output.to_string());
+
+        let db_conn = duckdb_open(&output_list[0], 2);
+        let _ = db_conn
+            .execute_batch(MD_FLOW_TABLE)
+            .map_err(|e| Error::new(std::io::ErrorKind::Other, format!("DuckDB error: {}", e)))?;
+
         Ok(Self {
             command: command.to_string(),
             input_list: input_list,
@@ -70,30 +84,57 @@ impl MergeProcessor {
             pass: pass.to_string(),
             interval: interval,
             extension: extension_string.to_string(),
+            retention: retention,
+            db_conn: db_conn,
         })
     }
-    fn load_json_file(input_spec: &str, input_list: &mut Vec<String>) -> Result<(), Error> {
-        let json_data: String = fs::read_to_string(input_spec).expect("unable to read JSON file");
-        let input_directories: Vec<InputJsonStructure> =
-            serde_json::from_str(&json_data).expect("failed to parse input file");
 
-        if input_directories.is_empty() {
-            return Err(Error::other("no directories in input file"));
-        }
-        let mut collison_map = HashMap::new();
-        for dir in input_directories {
-            if collison_map.insert(dir.input.clone(), "x").is_none() {
-                println!("\tinput: [{}]", dir.input);
-                input_list.push(dir.input);
-            } else {
-                println!("\t{} (duplicate)", dir.input);
-            }
-        }
+    fn purge_old(&mut self) -> Result<(), Error> {
+        let sql = format!(
+            "DELETE FROM flow WHERE stime < now() - interval '{} days';",
+            self.retention
+        );
+        self.db_conn
+            .execute_batch(&sql)
+            .map_err(|e| Error::new(std::io::ErrorKind::Other, format!("DuckDB error: {}", e)))?;
 
         Ok(())
     }
+
+    fn consume(&mut self, parquet_list: &str, output_list: &Vec<String>) -> Result<i64, Error> {
+        let command = self.get_command().clone();
+        let current_utc: DateTime<Utc> = Utc::now();
+        let rfc3339_name: String = current_utc.to_rfc3339();
+        // Sanitize rfc3339_name for filesystem safety
+        let safe_rfc3339 = rfc3339_name.replace(":", "-");
+        let mut record_count: i64 = 0;
+
+        let sql_count = format!("SELECT COUNT(*) FROM read_parquet({});", parquet_list);
+        let mut stmt = self
+            .db_conn
+            .prepare(&sql_count)
+            .map_err(|e| Error::new(std::io::ErrorKind::Other, format!("DuckDB error: {}", e)))?;
+        record_count = stmt
+            .query_row([], |row| row.get(0))
+            .map_err(|e| Error::new(std::io::ErrorKind::Other, format!("DuckDB error: {}", e)))?;
+
+        if record_count > 0 {
+            let sql = format!(
+                "INSERT INTO flow SELECT * FROM read_parquet({});",
+                parquet_list
+            );
+            self.db_conn.execute_batch(&sql).map_err(|e| {
+                Error::new(std::io::ErrorKind::Other, format!("DuckDB error: {}", e))
+            })?;
+            println!("{}: inserted {} flows", command, record_count);
+        } else {
+            println!("{}: no flows found", command);
+        }
+
+        Ok(record_count)
+    }
 }
-impl FileProcessor for MergeProcessor {
+impl FileProcessor for CacheProcessor {
     fn get_command(&self) -> &String {
         &self.command
     }
@@ -123,6 +164,7 @@ impl FileProcessor for MergeProcessor {
     fn delete_files(&self) -> bool {
         true
     }
+
     fn process(&mut self, file_list: &Vec<String>) -> Result<(), Error> {
         // Use iterator and join for file list formatting
         let parquet_list = file_list
@@ -147,11 +189,15 @@ impl FileProcessor for MergeProcessor {
             }
         }
 
-        let record_count = self.forward(&parquet_list, &self.output_list.clone())?;
+        let record_count = self.consume(&parquet_list, &self.output_list.clone())?;
         if record_count > 0 {
             println!("{}: {} flows merged", self.command, record_count);
         } else {
             println!("{}: no flows merged", self.command);
+        }
+
+        if self.retention > 0 {
+            self.purge_old()?;
         }
         Ok(())
     }

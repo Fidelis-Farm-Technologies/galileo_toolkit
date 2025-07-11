@@ -11,12 +11,9 @@ use crate::model::histogram::HistogramType::*;
 use crate::model::histogram::*;
 use crate::model::table::HistogramIntegerValue;
 use crate::model::table::MemFlowRecord;
-//use crate::model::table::NumberRecord;
 use crate::model::table::{HistogramSummaryTable, NumericHistogramTable};
 use duckdb::{params, Appender, Connection, DropBehavior};
-//use std::cmp::min;
-//use std::collections::HashMap;
-//use std::error::Error;
+use std::io::Error;
 
 #[derive(Debug)]
 pub struct NumberHistogram {
@@ -40,7 +37,13 @@ impl NumberHistogram {
         }
     }
 
-    fn serialize_summary(&self, appender: &mut Appender, observe: &str, vlan: i64, proto: &str) {
+    fn serialize_summary(
+        &self,
+        appender: &mut Appender,
+        observe: &str,
+        vlan: i64,
+        proto: &str,
+    ) -> Result<(), Error> {
         appender
             .append_row(params![
                 observe,
@@ -53,9 +56,17 @@ impl NumberHistogram {
                 self.bin_count,
                 self.filter,
             ])
-            .unwrap();
+            .map_err(|e| Error::new(std::io::ErrorKind::Other, format!("DuckDB error: {}", e)))?;
+
+        Ok(())
     }
-    fn serialize_histogram(&self, appender: &mut Appender, observe: &str, vlan: i64, proto: &str) {
+    fn serialize_histogram(
+        &self,
+        appender: &mut Appender,
+        observe: &str,
+        vlan: i64,
+        proto: &str,
+    ) -> Result<(), Error> {
         println!(
             "{}: serializing [{}/{}/{}/{}]...",
             self.name, observe, vlan, proto, self.name
@@ -68,6 +79,7 @@ impl NumberHistogram {
                 .unwrap();
             bin_num += 1;
         }
+        Ok(())
     }
 
     pub fn probability(&self, value: i64) -> f64 {
@@ -115,16 +127,28 @@ impl NumberHistogram {
 
         Ok(())
     }
-    pub fn serialize(&self, conn: &mut Connection, observe: &String, vlan: i64, proto: &String) {
+    pub fn serialize(
+        &self,
+        conn: &mut Connection,
+        observe: &String,
+        vlan: i64,
+        proto: &String,
+    ) -> Result<(), Error> {
         conn.execute_batch(HISTOGRAM_SUMMARY).unwrap();
         conn.execute_batch(HISTOGRAM_NUMERICAL).unwrap();
 
         let mut tx = conn.transaction().unwrap();
         tx.set_drop_behavior(DropBehavior::Commit);
-        let mut appender: Appender = tx.appender("histogram_summary").unwrap();
-        self.serialize_summary(&mut appender, observe, vlan, proto);
-        let mut appender: Appender = tx.appender("histogram_numerical").unwrap();
-        self.serialize_histogram(&mut appender, observe, vlan, proto);
+        let mut appender: Appender = tx
+            .appender("histogram_summary")
+            .map_err(|e| Error::new(std::io::ErrorKind::Other, format!("DuckDB error: {}", e)))?;
+        let _ = self.serialize_summary(&mut appender, observe, vlan, proto);
+        let mut appender: Appender = tx
+            .appender("histogram_numerical")
+            .map_err(|e| Error::new(std::io::ErrorKind::Other, format!("DuckDB error: {}", e)))?;
+        let _ = self.serialize_histogram(&mut appender, observe, vlan, proto);
+
+        Ok(())
     }
     pub fn load(
         db: &Connection,

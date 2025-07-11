@@ -89,7 +89,7 @@ impl RuleProcessor {
         let options: HashMap<&str, &str> = parse_options(options_string);
         for (key, value) in &options {
             if !value.is_empty() {
-                println!("{}: [{}={}]", command, key, value);
+                println!("{}: [{}=>{}]", command, key, value);
             }
         }
         let model_file = options

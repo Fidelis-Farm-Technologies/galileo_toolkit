@@ -55,6 +55,7 @@ pub static HISTOGRAM_SUMMARY: &str = "CREATE TABLE IF NOT EXISTS histogram_summa
     count UBIGINT,
     hash_size INTEGER,
     bin_count UBIGINT,
+    filter VARCHAR
 );";
 
 static HISTOGRAM_NUMERICAL: &str = "CREATE TABLE IF NOT EXISTS histogram_numerical

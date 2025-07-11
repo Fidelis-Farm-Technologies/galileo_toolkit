@@ -51,7 +51,7 @@ impl SampleProcessor {
         options.entry("percent").or_insert("20");
         for (key, value) in &options {
             if !value.is_empty() {
-                println!("{}: [{}={}]", command, key, value);
+                println!("{}: [{}=>{}]", command, key, value);
             }
         }
         let retention = options

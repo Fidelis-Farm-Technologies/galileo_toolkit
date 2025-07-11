@@ -1,16 +1,20 @@
 #!/bin/bash
 
-if [ ! -z "${GNAT_INPUT_DIR}" ] && [ ! -d "${GNAT_INPUT_DIR}" ]; then
-    mkdir ${GNAT_INPUT_DIR}
+if [ ! -z "${GNAT_INPUT}" ] && [ ! -d "${GNAT_INPUT}" ]; then
+    mkdir ${GNAT_INPUT}
 fi
 
-if [ ! -z "${GNAT_PASS_DIR}" ] && [ ! -d "${GNAT_PASS_DIR}" ]; then
-    mkdir ${GNAT_PASS_DIR}
+if [ ! -z "${GNAT_PASS}" ] && [ ! -d "${GNAT_PASS}" ]; then
+    mkdir ${GNAT_PASS}
 fi
 
 COMMANDLINE_OPTIONS=""
-if [ ! -z "${GNAT_PASS_DIR}" ]; then
-    COMMANDLINE_OPTIONS="--pass ${GNAT_PASS_DIR}"
+if [ ! -z "${GNAT_PASS}" ]; then
+    COMMANDLINE_OPTIONS="--pass ${GNAT_PASS}"
+fi
+
+if [ ! -z "${GNAT_INTERVAL}" ]; then
+    COMMANDLINE_OPTIONS="${COMMANDLINE_OPTIONS} --interval ${GNAT_INTERVAL}"
 fi
 
 if [ ! -z "${GNAT_OPTIONS}" ]; then
@@ -18,8 +22,7 @@ if [ ! -z "${GNAT_OPTIONS}" ]; then
 fi
 
 /opt/gnat/bin/gnat_split \
-    --input ${GNAT_INPUT_DIR} \
-    --output ${GNAT_OUTPUT_DIR} \
-    --interval ${GNAT_INTERVAL} \
+    --input ${GNAT_INPUT} \
+    --output ${GNAT_OUTPUT} \
     ${COMMANDLINE_OPTIONS}
 

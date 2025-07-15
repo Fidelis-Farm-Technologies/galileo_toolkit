@@ -212,7 +212,6 @@ impl FileProcessor for AggregationProcessor {
         return true;
     }
     fn process(&mut self, file_list: &Vec<String>) -> Result<(), Error> {
-
         let parquet_list = file_list
             .iter()
             .map(|file| format!("'{}'", file))
@@ -287,33 +286,17 @@ impl FileProcessor for AggregationProcessor {
                 )
             })?;
         } else {
-            {
-                let mut tx = self.db_conn.transaction().map_err(|e| {
-                    Error::new(
-                        std::io::ErrorKind::Other,
-                        format!("DuckDB transaction error: {}", e),
-                    )
-                })?;
-                tx.set_drop_behavior(DropBehavior::Commit);
-                let mut cache_appender = tx.appender("metrics").map_err(|e| {
-                    Error::new(
-                        std::io::ErrorKind::Other,
-                        format!("DuckDB appender error: {}", e),
-                    )
-                })?;
-                for table in &self.table_list {
-                    table.insert(&mem_source, &mut cache_appender);
-                }
-                let _ = cache_appender.flush();
-                drop(cache_appender);
-
-                tx.commit().map_err(|e| {
-                    Error::new(
-                        std::io::ErrorKind::Other,
-                        format!("DuckDB commit error: {}", e),
-                    )
-                })?;
+            let mut cache_appender = self.db_conn.appender("metrics").map_err(|e| {
+                Error::new(
+                    std::io::ErrorKind::Other,
+                    format!("DuckDB appender error: {}", e),
+                )
+            })?;
+            for table in &self.table_list {
+                table.insert(&mem_source, &mut cache_appender);
             }
+            let _ = cache_appender.flush();
+            drop(cache_appender);
 
             println!("{}: exporting", self.command);
             let sql_command = format!("COPY (SELECT *, year(bucket) AS year, month(bucket) AS month, day(bucket) AS day FROM metrics)

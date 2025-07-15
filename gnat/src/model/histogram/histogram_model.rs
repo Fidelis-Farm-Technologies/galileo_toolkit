@@ -371,9 +371,7 @@ impl HistogramModels {
         db_out
             .execute_batch("CREATE OR REPLACE TABLE score_table (id UUID, hbos_score DOUBLE);")?;
 
-        let mut tx = db_out.transaction()?;
-        tx.set_drop_behavior(DropBehavior::Commit);
-        let mut score_appender = tx.appender("score_table")?;
+        let mut score_appender = db_out.appender("score_table")?;
 
         let sql_command = format!(
             "SELECT * EXCLUDE(tag, hbos_map, ndpi_risk_list) FROM flow WHERE observe='{}' AND dvlan = {} AND proto='{}' AND {};",
@@ -499,11 +497,10 @@ impl HistogramModels {
         }
         score_appender.flush()?;
         drop(score_appender);
-        tx.commit()?;
         Ok(count)
     }
 
-    fn get_default_severity_levels(&self, db_conn: &mut Connection) -> (f64, f64, f64, f64) {
+    fn get_histogram_severity_levels(&self, db_conn: &mut Connection) -> (f64, f64, f64, f64) {
         //
         // generate histogram of HBOS scores
         //
@@ -558,101 +555,97 @@ impl HistogramModels {
     }
     pub fn summarize(
         &mut self,
-        parquet_conn: &mut Connection,
-        db_conn: &mut Connection,
+        source_conn: &mut Connection,
+        sink_conn: &mut Connection,
     ) -> Result<(), Error> {
-        let mut score_conn = duckdb_open_memory(2);
+        println!("\tfiltering...");
 
         let sql_command = format!(
-            "SELECT * EXCLUDE(tag, hbos_map, ndpi_risk_list) FROM flow WHERE observe='{}' AND dvlan = {} AND proto='{}' AND {};",         
-            self.observe, self.vlan, self.proto, self.filter
+            "SELECT * FROM flow WHERE observe='{}' AND dvlan = {} AND proto='{}';",         
+            self.observe, self.vlan, self.proto
         );
-        let mut stmt = parquet_conn.prepare(&sql_command).expect("sql summarize");
-        let record_iter = stmt
-            .query_map([], |row| {
-                Ok(MemFlowRecord {
-                    stream: row.get(0).expect("missing value"),
-                    id: row.get(1).expect("missing value"),
-                    observe: row.get(2).expect("missing value"),
-                    stime: row.get(3).expect("missing value"),
-                    etime: row.get(4).expect("missing value"),
-                    dur: row.get(5).expect("missing value"),
-                    rtt: row.get(6).expect("missing value"),
-                    pcr: row.get(7).expect("missing value"),
-                    proto: row.get(8).expect("missing value"),
-                    saddr: row.get(9).expect("missing value"),
-                    daddr: row.get(10).expect("missing value"),
-                    sport: row.get(11).expect("missing value"),
-                    dport: row.get(12).expect("missing value"),
-                    iflags: row.get(13).expect("missing value"),
-                    uflags: row.get(14).expect("missing value"),
-                    stcpseq: row.get(15).expect("missing value"),
-                    dtcpseq: row.get(16).expect("missing value"),
-                    svlan: row.get(17).expect("missing value"),
-                    dvlan: row.get(18).expect("missing value"),
-                    spkts: row.get(19).expect("missing value"),
-                    dpkts: row.get(20).expect("missing value"),
-                    sbytes: row.get(21).expect("missing value"),
-                    dbytes: row.get(22).expect("missing value"),
-                    sentropy: row.get(23).expect("missing value"),
-                    dentropy: row.get(24).expect("missing value"),
-                    siat: row.get(25).expect("missing value"),
-                    diat: row.get(26).expect("missing value"),
-                    sstdev: row.get(27).expect("missing value"),
-                    dstdev: row.get(28).expect("missing value"),
-                    dtcpurg: row.get(29).expect("missing value"),
-                    stcpurg: row.get(30).expect("missing value"),
-                    ssmallpktcnt: row.get(31).expect("missing value"),
-                    dsmallpktcnt: row.get(32).expect("missing value"),
-                    slargepktcnt: row.get(33).expect("missing value"),
-                    dlargepktcnt: row.get(34).expect("missing value"),
-                    snonemptypktcnt: row.get(35).expect("missing value"),
-                    dnonemptypktcnt: row.get(36).expect("missing value"),
-                    sfirstnonemptycnt: row.get(37).expect("missing value"),
-                    dfirstnonemptycnt: row.get(38).expect("missing value"),
-                    smaxpktsize: row.get(39).expect("missing value"),
-                    dmaxpktsize: row.get(40).expect("missing value"),
-                    sstdevpayload: row.get(41).expect("missing value"),
-                    dstdevpayload: row.get(42).expect("missing value"),
-                    spd: row.get(43).expect("missing value"),
-                    reason: row.get(44).expect("missing value"),
-                    smac: row.get(45).expect("missing value"),
-                    dmac: row.get(46).expect("missing value"),
-                    scountry: row.get(47).expect("missing value"),
-                    dcountry: row.get(48).expect("missing value"),
-                    sasn: row.get(49).expect("missing value"),
-                    dasn: row.get(50).expect("missing value"),
-                    sasnorg: row.get(51).expect("missing value"),
-                    dasnorg: row.get(52).expect("missing value"),
-                    orient: row.get(53).expect("missing value"),
-                    hbos_score: row.get(54).expect("missing value"),
-                    hbos_severity: row.get(55).expect("missing value"),
-                    appid: row.get(56).expect("missing value"),
-                    category: row.get(57).unwrap_or("".to_string()),
-                    risk_bits: row.get(58).expect("missing value"),
-                    risk_score: row.get(59).expect("missing value"),
-                    risk_severity: row.get(60).expect("missing value"),
-                    trigger: row.get(61).expect("missing value"),
-                })
-            })
-            .expect("threshold map");
+        let mut stmt = source_conn.prepare(&sql_command).expect("sql summarize");
 
-        let mut hbos_data: Vec<f64> = Vec::new();
-        score_conn
-            .execute_batch(HBOS_SCORE)
-            .expect("failed to create score table");
+        println!("\tloading...");
+        let record_iter = stmt.query_map([], |row| {
+            Ok(MemFlowRecord {
+                stream: row.get(0).expect("missing value"),
+                id: row.get(1).expect("missing value"),
+                observe: row.get(2).expect("missing value"),
+                stime: row.get(3).expect("missing value"),
+                etime: row.get(4).expect("missing value"),
+                dur: row.get(5).expect("missing value"),
+                rtt: row.get(6).expect("missing value"),
+                pcr: row.get(7).expect("missing value"),
+                proto: row.get(8).expect("missing value"),
+                saddr: row.get(9).expect("missing value"),
+                daddr: row.get(10).expect("missing value"),
+                sport: row.get(11).expect("missing value"),
+                dport: row.get(12).expect("missing value"),
+                iflags: row.get(13).expect("missing value"),
+                uflags: row.get(14).expect("missing value"),
+                stcpseq: row.get(15).expect("missing value"),
+                dtcpseq: row.get(16).expect("missing value"),
+                svlan: row.get(17).expect("missing value"),
+                dvlan: row.get(18).expect("missing value"),
+                spkts: row.get(19).expect("missing value"),
+                dpkts: row.get(20).expect("missing value"),
+                sbytes: row.get(21).expect("missing value"),
+                dbytes: row.get(22).expect("missing value"),
+                sentropy: row.get(23).expect("missing value"),
+                dentropy: row.get(24).expect("missing value"),
+                siat: row.get(25).expect("missing value"),
+                diat: row.get(26).expect("missing value"),
+                sstdev: row.get(27).expect("missing value"),
+                dstdev: row.get(28).expect("missing value"),
+                dtcpurg: row.get(29).expect("missing value"),
+                stcpurg: row.get(30).expect("missing value"),
+                ssmallpktcnt: row.get(31).expect("missing value"),
+                dsmallpktcnt: row.get(32).expect("missing value"),
+                slargepktcnt: row.get(33).expect("missing value"),
+                dlargepktcnt: row.get(34).expect("missing value"),
+                snonemptypktcnt: row.get(35).expect("missing value"),
+                dnonemptypktcnt: row.get(36).expect("missing value"),
+                sfirstnonemptycnt: row.get(37).expect("missing value"),
+                dfirstnonemptycnt: row.get(38).expect("missing value"),
+                smaxpktsize: row.get(39).expect("missing value"),
+                dmaxpktsize: row.get(40).expect("missing value"),
+                sstdevpayload: row.get(41).expect("missing value"),
+                dstdevpayload: row.get(42).expect("missing value"),
+                spd: row.get(43).expect("missing value"),
+                reason: row.get(44).expect("missing value"),
+                smac: row.get(45).expect("missing value"),
+                dmac: row.get(46).expect("missing value"),
+                scountry: row.get(47).expect("missing value"),
+                dcountry: row.get(48).expect("missing value"),
+                sasn: row.get(49).expect("missing value"),
+                dasn: row.get(50).expect("missing value"),
+                sasnorg: row.get(51).expect("missing value"),
+                dasnorg: row.get(52).expect("missing value"),
+                orient: row.get(53).expect("missing value"),
+                // tag VARCHAR[],
+                hbos_score: row.get(55).expect("missing value"),
+                hbos_severity: row.get(56).expect("missing value"),
+                // hbos_map MAP(VARCHAR, FLOAT),
+                appid: row.get(58).expect("missing value"),
+                category: row.get(59).unwrap_or("".to_string()),
+                risk_bits: row.get(60).expect("missing value"),
+                risk_score: row.get(61).expect("missing value"),
+                risk_severity: row.get(62).expect("missing value"),
+                // ndpi_risk_list VARCHAR[],
+                trigger: row.get(64).expect("missing value"),
+            })
+        })?;
+
+        println!("\tscoring...");
+        let mut score_conn = duckdb_open_memory(1);
         {
-            let mut tx = score_conn.transaction().unwrap();
-            tx.set_drop_behavior(DropBehavior::Commit);
-            let mut appender: Appender = tx.appender("hbos_score").unwrap();
+            score_conn.execute_batch(HBOS_SCORE)?;
+
+            let mut appender: Appender = score_conn.appender("hbos_score")?;
 
             for record in record_iter {
-                let flow_record = record.unwrap();
-
-                //if flow_record.proto == "tcp" && !flow_record.iflags.starts_with("Ss.a") {
-                //    // TCP three-way handshake established
-                //    continue;
-                //}
+                let flow_record = record?;
 
                 let mut hbos_score: f64 = 0.0;
                 for (_name, histogram) in &mut self.numerical {
@@ -679,84 +672,77 @@ impl HistogramModels {
                     let feature_prob = histogram.get_probability(&flow_record);
                     hbos_score += (1.0 / feature_prob).log10();
                 }
-                appender
-                    .append_row(params![hbos_score])
-                    .expect("connection appender");
-                hbos_data.push(hbos_score);
+                appender.append_row(params![hbos_score])?;
             }
             let _ = appender.flush();
+            drop(appender);
         }
 
         //
         // generate histogram summary
         //
-        {
-            let (low, medium, high, severe) = self.get_default_severity_levels(&mut score_conn);
-            let mut stmt = score_conn
-                .prepare(
-                    "SELECT min(score),max(score),skewness(score),avg(score),stddev_pop(score),
+        println!("\tsummarizing...");
+        let (low, medium, high, severe) = self.get_histogram_severity_levels(&mut score_conn);
+        let mut stmt = score_conn.prepare(
+            "SELECT min(score),max(score),skewness(score),avg(score),stddev_pop(score),
                      mad(score),median(score),quantile_cont(score, 0.99999) FROM hbos_score;",
-                )
-                .expect("sql prepare");
-            let hbos_summary = stmt
-                .query_row([], |row| {
-                    Ok(HbosSummaryRecord {
-                        observe: self.observe.clone(),
-                        vlan: self.vlan,
-                        proto: self.proto.clone(),
-                        min: row.get(0).expect("missing min"),
-                        max: row.get(1).expect("missing max"),
-                        skewness: row.get(2).expect("missing skew"),
-                        avg: row.get(3).expect("missing avg"),
-                        std: row.get(4).expect("missing std"),
-                        mad: row.get(5).expect("missing mad"),
-                        median: row.get(6).expect("missing median"),
-                        quantile: row.get::<_, f64>(7).expect("missing quantile").round(),
-                        low: low,
-                        medium: medium,
-                        high: high,
-                        severe: severe,
-                        filter: self.filter.to_string(),
-                    })
-                })
-                .expect("HbosSummaryRecord");
-            println!(
-                "[{}/{}/{}] [low={},medium={},high={}]",
-                hbos_summary.observe,
-                hbos_summary.vlan,
-                hbos_summary.proto,
-                hbos_summary.low,
-                hbos_summary.medium,
-                hbos_summary.high
-            );
-
-            let _ = db_conn.execute_batch(HBOS_SUMMARY);
-            let mut tx = db_conn.transaction().unwrap();
-            tx.set_drop_behavior(DropBehavior::Commit);
-            let mut appender: Appender = tx.appender("hbos_summary").unwrap();
-            appender
-                .append_row(params![
-                    hbos_summary.observe,
-                    hbos_summary.vlan,
-                    hbos_summary.proto,
-                    hbos_summary.min,
-                    hbos_summary.max,
-                    hbos_summary.skewness,
-                    hbos_summary.avg,
-                    hbos_summary.std,
-                    hbos_summary.mad,
-                    hbos_summary.median,
-                    hbos_summary.quantile,
-                    hbos_summary.low,
-                    hbos_summary.medium,
-                    hbos_summary.high,
-                    hbos_summary.severe,
-                    hbos_summary.filter,
-                ])
-                .expect("hbos_summary");
-            let _ = appender.flush();
-        }
+        )?;
+        let hbos_summary = stmt.query_row([], |row| {
+            Ok(HbosSummaryRecord {
+                observe: self.observe.clone(),
+                vlan: self.vlan,
+                proto: self.proto.clone(),
+                min: row.get(0).expect("missing min"),
+                max: row.get(1).expect("missing max"),
+                skewness: row.get(2).expect("missing skew"),
+                avg: row.get(3).expect("missing avg"),
+                std: row.get(4).expect("missing std"),
+                mad: row.get(5).expect("missing mad"),
+                median: row.get(6).expect("missing median"),
+                quantile: row.get::<_, f64>(7).expect("missing quantile").round(),
+                low: low,
+                medium: medium,
+                high: high,
+                severe: severe,
+                filter: self.filter.to_string(),
+            })
+        })?;
         let _ = score_conn.close();
+
+        println!(
+            "[{}/{}/{}] [low={},medium={},high={}]",
+            hbos_summary.observe,
+            hbos_summary.vlan,
+            hbos_summary.proto,
+            hbos_summary.low,
+            hbos_summary.medium,
+            hbos_summary.high
+        );
+
+        let _ = sink_conn.execute_batch(HBOS_SUMMARY)?;
+
+        let mut appender: Appender = sink_conn.appender("hbos_summary")?;
+        appender.append_row(params![
+            hbos_summary.observe,
+            hbos_summary.vlan,
+            hbos_summary.proto,
+            hbos_summary.min,
+            hbos_summary.max,
+            hbos_summary.skewness,
+            hbos_summary.avg,
+            hbos_summary.std,
+            hbos_summary.mad,
+            hbos_summary.median,
+            hbos_summary.quantile,
+            hbos_summary.low,
+            hbos_summary.medium,
+            hbos_summary.high,
+            hbos_summary.severe,
+            hbos_summary.filter,
+        ])?;
+        let _ = appender.flush();
+        drop(appender);
+
         Ok(())
     }
 

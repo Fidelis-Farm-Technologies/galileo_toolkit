@@ -105,12 +105,13 @@ impl ModelProcessor {
     fn upload_model(&self) -> Result<(), Error> {
         // if the md_database is empty, we do not upload the model
         if !self.md_database.is_empty() {
-            let md_conn = duckdb_open("md:", 2);
+            let md_conn = duckdb_open("md:", 1);
 
             // upload the model to motherduck
             let sql_command = format!(
-                "CREATE OR REPLACE DATABASE {} FROM '{}';",
-                self.md_database, self.model_list[0],
+                "CREATE OR REPLACE DATABASE tmp; USE tmp;
+                 CREATE OR REPLACE DATABASE {} FROM '{}';",
+                self.md_database, self.model_list[0]
             );
 
             md_conn.execute_batch(&sql_command).map_err(|e| {
@@ -119,6 +120,7 @@ impl ModelProcessor {
                     format!("DuckDB error during model upload: {}", e),
                 )
             })?;
+
             let _ = md_conn.close();
             println!(
                 "{}: uploaded model {} to motherduck",
@@ -210,47 +212,49 @@ impl FileProcessor for ModelProcessor {
             }
         }
 
-        let mut parquet_conn = duckdb_open_memory(2);
-        let tmp_output = format!("{}.tmp", self.model_list[0]);
-        let mut db_conn = duckdb_open(&tmp_output, 2);
-        // check the number of days in the dataset
+        // load the parquet files into a temporary duckdb database
+        let tmp_input = format!("{}.input.tmp", self.model_list[0]);
+        let mut db_input = duckdb_open(&tmp_input, 1);
+        let sql_command = format!(
+            "CREATE OR REPLACE TABLE flow AS SELECT * FROM read_parquet({}) WHERE {};",
+            parquet_list, self.filter
+        );
+        db_input
+            .execute_batch(&sql_command)
+            .map_err(|e| Error::new(std::io::ErrorKind::Other, format!("DuckDB error: {}", e)))?;
 
+        // check the number of days in the dataset
+        // if there are not enough days, skip the model build
         println!("{}: checking dataset duration...", self.command);
         let sql_days_command = format!(
             "SELECT date_diff('day',first,last) 
-             FROM (SELECT MIN(stime) AS first, MAX(stime) AS last
-             FROM read_parquet({}));",
-            parquet_list
+             FROM (SELECT MIN(stime) AS first, MAX(stime) AS last FROM flow);",
         );
-        let mut stmt = parquet_conn.prepare(&sql_days_command).map_err(|e| {
+        let mut stmt = db_input.prepare(&sql_days_command).map_err(|e| {
             Error::new(
                 std::io::ErrorKind::Other,
                 format!("DuckDB prepare error: {}", e),
             )
         })?;
-
         let days = stmt
             .query_row([], |row| Ok(row.get::<_, u32>(0).expect("missing version")))
             .expect("missing days");
-        println!("{}: {} days of data", self.command, days);
         if days < MINIMUM_DAYS {
-            println!("{}: not enough data to baseline, skipping model build.", self.command);
+            println!(
+                "{}: not enough data to baseline, skipping model build.",
+                self.command
+            );
             return Ok(());
         }
 
-        let sql_command = format!(
-            "CREATE TABLE flow AS SELECT * FROM read_parquet({});",
-            parquet_list
+        println!(
+            "{}: modeling {} days of sampled data...",
+            self.command, days
         );
-        parquet_conn
-            .execute_batch(&sql_command)
-            .map_err(|e| Error::new(std::io::ErrorKind::Other, format!("DuckDB error: {}", e)))?;
-
         // load observation list
         println!("{}: determining observation points...", self.command);
-
-        let mut stmt = parquet_conn
-            .prepare(PARQUET_DISTINCT_OBSERVATIONS)
+        let mut stmt = db_input
+            .prepare("SELECT DISTINCT observe, dvlan, proto FROM flow GROUP BY ALL ORDER BY ALL;")
             .map_err(|e| Error::new(std::io::ErrorKind::Other, format!("DuckDB error: {}", e)))?;
         let record_iter = stmt
             .query_map([], |row| {
@@ -261,6 +265,7 @@ impl FileProcessor for ModelProcessor {
                 })
             })
             .map_err(|e| Error::new(std::io::ErrorKind::Other, format!("DuckDB error: {}", e)))?;
+
         let mut distinct_observation_models: Vec<DistinctObservation> = Vec::new();
         for record in record_iter {
             distinct_observation_models.push(record.map_err(|e| {
@@ -293,18 +298,36 @@ impl FileProcessor for ModelProcessor {
                 severe: 0.0,
                 filter: "".to_string(),
             };
-            let _ = model.build(&parquet_conn, &self.feature_list, &self.filter);
+            let _ = model.build(&db_input, &self.feature_list, &self.filter);
             distinct_models.insert(distinct_key, model);
         }
+        println!("{}: done", self.command);
 
+        let tmp_output = format!("{}.output.tmp", self.model_list[0]);
+        let mut db_output = duckdb_open(&tmp_output, 1);
         // serialize to duckdb
         for (distinct_key, model) in distinct_models.iter() {
             println!(
                 "{}: serializing HBOS model [{}]",
                 self.command, distinct_key
             );
-            let _ = model.serialize(&mut db_conn);
+            let _ = model.serialize(&mut db_output);
         }
+        println!("{}: done", self.command);
+        let _ = db_output.close();
+        let _ = db_input.close();
+
+        // reopen the input database to summarize the HBOS models
+        // this is done to avoid memory issues with large datasets
+        let mut db_input = duckdb_open(&tmp_input, 1);
+        let mut db_output = duckdb_open(&tmp_output, 1);
+        let sql_command = format!(
+            "CREATE OR REPLACE TABLE flow AS SELECT * FROM read_parquet({}) WHERE {};",
+            parquet_list, self.filter
+        );
+        db_input
+            .execute_batch(&sql_command)
+            .map_err(|e| Error::new(std::io::ErrorKind::Other, format!("DuckDB error: {}", e)))?;
 
         // summarize hbos
         for (distinct_key, model) in distinct_models.iter_mut() {
@@ -312,11 +335,15 @@ impl FileProcessor for ModelProcessor {
                 "{}: calculating HBOS summary [{}]",
                 self.command, distinct_key
             );
-            let _ = model.summarize(&mut parquet_conn, &mut db_conn);
+            let _ = model.summarize(&mut db_input, &mut db_output);
         }
+        println!("{}: done", self.command);
+        let _ = db_output.close();
+        let _ = db_input.close();
 
-        let _ = db_conn.close();
-        let _ = parquet_conn.close();
+        if Path::new(&tmp_input).exists() {
+            fs::remove_file(&tmp_input)?;
+        }
 
         if Path::new(&self.model_list[0]).exists() {
             // backup the old model file

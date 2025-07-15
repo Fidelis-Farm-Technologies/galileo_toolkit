@@ -48,7 +48,7 @@ impl SampleProcessor {
         let interval = parse_interval(interval_string);
         let mut options = parse_options(options_string);
         options.entry("retention").or_insert("7");
-        options.entry("percent").or_insert("20");
+        options.entry("percent").or_insert("5");
         for (key, value) in &options {
             if !value.is_empty() {
                 println!("{}: [{}=>{}]", command, key, value);
@@ -66,7 +66,7 @@ impl SampleProcessor {
             .parse::<u8>()
             .unwrap();
 
-        if interval == Interval::MINUTE || interval == Interval::SECOND {          
+        if interval == Interval::MINUTE || interval == Interval::SECOND {
             return Err(Error::new(
                 std::io::ErrorKind::InvalidInput,
                 "sampling not supported for minute or second intervals",
@@ -90,7 +90,6 @@ impl SampleProcessor {
     }
 
     fn purge_old(&self) -> Result<(), Error> {
-
         let current_utc: DateTime<Utc> = Utc::now();
         let rfc3339_name: String = current_utc.to_rfc3339();
         let new_filename = format!(
@@ -100,7 +99,7 @@ impl SampleProcessor {
         );
         let tmp_filename = format!("{}/.{}", self.output_list[0], new_filename);
         let final_filename = format!("{}/{}.parquet", self.output_list[0], new_filename);
-            
+
         let mut file_list: Vec<String> = Vec::new();
         for entry in fs::read_dir(&self.output_list[0])
             .map_err(|e| Error::new(std::io::ErrorKind::Other, format!("read_dir error: {}", e)))?
@@ -129,14 +128,14 @@ impl SampleProcessor {
             .join(",");
         let parquet_list = format!("[{}]", parquet_list);
 
-        let conn = duckdb_open_memory(4);           
+        let conn = duckdb_open_memory(4);
         let sql_command = format!(
             "COPY (SELECT * FROM read_parquet({})
-                   WHERE date_trunc('day',stime) > date_add(date_trunc('day',stime), - INTERVAL {} DAY))
+                   WHERE date_trunc('day',stime) > date_add(current_date, - INTERVAL {} DAY))
                 TO '{}' (FORMAT 'parquet', CODEC 'snappy', ROW_GROUP_SIZE 100_000);",
             parquet_list, self.retention, tmp_filename
         );
-        
+
         println!("{}: filtering...", self.command);
         conn.execute_batch(&sql_command)
             .map_err(|e| Error::new(std::io::ErrorKind::Other, format!("DuckDB error: {}", e)))?;
@@ -231,8 +230,9 @@ impl SampleProcessor {
                 "SELECT count(*) FROM flow
                  WHERE observe='{}' 
                    AND dvlan = {} AND proto='{}'                   
-                   AND TRIGGER = 0;",
-                record.observe, record.vlan, record.proto
+                   AND TRIGGER = 0
+                   AND date_trunc('day',stime) > date_add(current_date, - INTERVAL {} DAY);",
+                record.observe, record.vlan, record.proto, self.retention
             );
 
             let mut stmt = conn.prepare(&sql_command).map_err(|e| {
@@ -264,9 +264,10 @@ impl SampleProcessor {
                  WHERE observe='{}' 
                    AND dvlan = {} AND proto='{}'                   
                    AND TRIGGER = 0
+                   AND date_trunc('day',stime) > date_add(current_date, - INTERVAL {} DAY)
                  USING SAMPLE {}%)
                  TO '{}' (FORMAT 'parquet', CODEC 'snappy', ROW_GROUP_SIZE 100_000);",
-                record.observe, record.vlan, record.proto, self.percent, tmp_filename
+                record.observe, record.vlan, record.proto, self.retention, self.percent, tmp_filename
             );
             conn.execute_batch(&sql_command).map_err(|e| {
                 Error::new(std::io::ErrorKind::Other, format!("DuckDB error: {}", e))

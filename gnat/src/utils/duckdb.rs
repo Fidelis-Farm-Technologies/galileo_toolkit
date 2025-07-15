@@ -14,14 +14,16 @@ pub fn duckdb_open(db_file: &str, mem_gig: u32) -> Connection {
     } else if db_file.starts_with("md:") {
         let conn = Connection::open_with_flags(db_file, config).expect("opening motherduck");
 
-        conn.execute_batch("SET temp_directory = '/var/spool';")
-            .expect("execute_batch");
+        conn.execute_batch(
+            "SET temp_directory = '/var/spool'; SET max_temp_directory_size = '128GB';",
+        )
+        .expect("execute_batch");
         return conn;
     }
 
     let conn = Connection::open_with_flags(db_file, config).expect("opening database");
 
-    conn.execute_batch("SET temp_directory = '/var/spool';")
+    conn.execute_batch("SET temp_directory = '/var/spool'; SET max_temp_directory_size = '128GB';")
         .expect("execute_batch");
 
     conn
@@ -44,15 +46,18 @@ pub fn duckdb_open_readonly(db_file: &str, mem_gig: u32) -> Connection {
         let conn =
             Connection::open_with_flags(db_file, readonly_config).expect("opening motherduck");
 
-        conn.execute_batch("SET temp_directory = '/var/spool';")
-            .expect("execute_batch");
+        conn.execute_batch(
+            "SET temp_directory = '/var/spool'; SET max_temp_directory_size = '128GB';",
+        )
+        .expect("execute_batch");
 
         return conn;
     }
 
     let conn =
         Connection::open_with_flags(db_file, readonly_config).expect("opening readonly database");
-    conn.execute_batch("SET temp_directory = '/var/spool';")
+
+    conn.execute_batch("SET temp_directory = '/var/spool'; SET max_temp_directory_size = '128GB';")
         .expect("execute_batch");
 
     conn
@@ -67,7 +72,7 @@ pub fn duckdb_open_memory(mem_gig: u32) -> Connection {
         .expect("threads");
     let conn = Connection::open_in_memory_with_flags(config).expect("opening memory db");
 
-    conn.execute_batch("SET temp_directory = '/var/spool';")
+    conn.execute_batch("SET temp_directory = '/var/spool'; SET max_temp_directory_size = '128GB';")
         .expect("execute_batch");
 
     conn

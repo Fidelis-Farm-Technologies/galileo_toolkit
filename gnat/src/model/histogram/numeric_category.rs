@@ -55,7 +55,7 @@ impl NumericCategoryHistogram {
                 0,
                 self.filter
             ])
-            .unwrap();
+            .map_err(|e| Error::new(std::io::ErrorKind::Other, format!("DuckDB error: {}", e)))?;
 
         Ok(())
     }
@@ -73,7 +73,9 @@ impl NumericCategoryHistogram {
         for (hash_bin, value) in &self.map {
             appender
                 .append_row(params![observe, vlan, proto, self.name, hash_bin, value])
-                .unwrap();
+                .map_err(|e| {
+                    Error::new(std::io::ErrorKind::Other, format!("DuckDB error: {}", e))
+                })?;
         }
         Ok(())
     }

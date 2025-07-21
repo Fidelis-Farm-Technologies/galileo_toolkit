@@ -102,16 +102,21 @@ impl ModelProcessor {
             md_database: md_database.to_string(),
         })
     }
-    fn upload_model(&self) -> Result<(), Error> {
+
+    fn upload_model(&self, model_file: &str) -> Result<(), Error> {
         // if the md_database is empty, we do not upload the model
         if !self.md_database.is_empty() {
-            let md_conn = duckdb_open("md:", 1);
+            println!(
+                "{}: uploading model {} to motherduck",
+                self.command, self.md_database
+            );
 
+            let md_conn = duckdb_open("md:", 1);
             // upload the model to motherduck
             let sql_command = format!(
                 "CREATE OR REPLACE DATABASE tmp; USE tmp;
                  CREATE OR REPLACE DATABASE {} FROM '{}';",
-                self.md_database, self.model_list[0]
+                self.md_database, model_file
             );
 
             md_conn.execute_batch(&sql_command).map_err(|e| {
@@ -122,11 +127,9 @@ impl ModelProcessor {
             })?;
 
             let _ = md_conn.close();
-            println!(
-                "{}: uploaded model {} to motherduck",
-                self.command, self.md_database
-            );
+            println!("{}: done.", self.command);
         }
+
         Ok(())
     }
 }
@@ -337,12 +340,18 @@ impl FileProcessor for ModelProcessor {
             );
             let _ = model.summarize(&mut db_input, &mut db_output);
         }
-        println!("{}: done", self.command);
         let _ = db_output.close();
         let _ = db_input.close();
+        println!("{}: done", self.command);
 
+        
         if Path::new(&tmp_input).exists() {
-            fs::remove_file(&tmp_input)?;
+            fs::remove_file(&tmp_input).map_err(|e| {
+                Error::new(
+                    std::io::ErrorKind::Other,
+                    format!("failed to rename backup model: {}", e),
+                )
+            })?;
         }
 
         if Path::new(&self.model_list[0]).exists() {
@@ -357,6 +366,7 @@ impl FileProcessor for ModelProcessor {
                 )
             })?;
         }
+
         if Path::new(&tmp_output).exists() {
             fs::rename(&tmp_output, &self.model_list[0]).map_err(|e| {
                 Error::new(
@@ -364,10 +374,10 @@ impl FileProcessor for ModelProcessor {
                     format!("failed to rename model: {}", e),
                 )
             })?;
-        }
 
-        // upload the model to motherduck if configured
-        self.upload_model()?;
+            // upload the model to motherduck if configured
+            self.upload_model(&self.model_list[0])?;
+        }
 
         Ok(())
     }

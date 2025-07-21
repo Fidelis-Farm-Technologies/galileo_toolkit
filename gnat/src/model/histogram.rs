@@ -191,7 +191,7 @@ pub static MD_FLOW_TABLE: &str = "CREATE TABLE IF NOT EXISTS flow (
     ndpi_category VARCHAR,
     ndpi_risk_bits UBIGINT,   
     ndpi_risk_score UINTEGER,
-    npdi_risk_severity UTINYINT,
+    ndpi_risk_severity UTINYINT,
     ndpi_risk_list VARCHAR[],
     trigger TINYINT
     )";

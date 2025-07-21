@@ -28,6 +28,7 @@ pub struct ExportProcessor {
     pub interval: Interval,
     pub extension: String,
     pub format: String,
+    pub filter: String,
 }
 
 impl ExportProcessor {
@@ -45,6 +46,7 @@ impl ExportProcessor {
         let mut options = parse_options(options_string);
         options.entry("format").or_insert("json");
         options.entry("fields").or_insert("");
+        options.entry("filter").or_insert("");
         for (key, value) in &options {
             if !value.is_empty() {
                 println!("{}: [{}=>{}]", command, key, value);
@@ -52,6 +54,7 @@ impl ExportProcessor {
         }
 
         let format = options.get("format").expect("expected format");
+        let filter = options.get("filter").expect("expected filter");
         let field_list = options.get("fields").expect("expected format");
 
         let list: Vec<String> = field_list.split(",").map(str::to_string).collect();
@@ -82,6 +85,7 @@ impl ExportProcessor {
             interval: interval,
             extension: extension_string.to_string(),
             format: format.to_string(),
+            filter: filter.to_string(),
         })
     }
 }
@@ -147,24 +151,30 @@ impl FileProcessor for ExportProcessor {
             self.output_list[0], self.command, rfc3339_name
         );
 
+        let where_filter = if !self.filter.is_empty() {
+            format!(" WHERE {}", self.filter)
+        } else {
+            String::new()
+        };
+
         let sql_command: String;
         match self.format.as_str() {
             "csv" => {
                 sql_command = format!(
-                    "COPY (SELECT * FROM read_parquet({}) TO '{}.csv' (HEADER, DELIMITER ',');",
-                    parquet_list, output_file
+                    "COPY (SELECT * FROM read_parquet({}) {}) TO '{}.csv' (HEADER, DELIMITER ',');",
+                    parquet_list, where_filter, output_file
                 );
             }
             "json" => {
                 sql_command = format!(
-                    "COPY (SELECT * FROM read_parquet({}) TO '{}.json';",
-                    parquet_list, output_file
+                    "COPY (SELECT * FROM read_parquet({}) {}) TO '{}.json';",
+                    parquet_list, where_filter, output_file
                 );
             }
             _ => {
                 sql_command = format!(
-                    "COPY (SELECT * FROM read_parquet({}) TO '{}.json';",
-                    parquet_list, output_file
+                    "COPY (SELECT * FROM read_parquet({}) {}) TO '{}.json';",
+                    parquet_list, where_filter, output_file
                 );
             }
         }

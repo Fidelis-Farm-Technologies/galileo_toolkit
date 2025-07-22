@@ -123,6 +123,7 @@ pub static HBOS_SUMMARY: &str = "CREATE TABLE IF NOT EXISTS hbos_summary
     severe FLOAT
 );";
 
+
 static HBOS_SCORE: &str = "CREATE OR REPLACE TABLE hbos_score
 (
     score FLOAT

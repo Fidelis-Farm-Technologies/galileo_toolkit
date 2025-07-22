@@ -154,8 +154,8 @@ impl IpAddrCategoryHistogram {
         proto: &str,
     ) -> Result<(), duckdb::Error> {
         let sql_command = format!(
-            "SELECT {} FROM flow WHERE observe='{}' AND dvlan = {} AND proto='{}' AND {};",
-            self.name, observe, vlan, proto, self.filter
+            "SELECT {} FROM flow WHERE {};",
+            self.name, self.filter
         );
         let mut stmt = db.prepare(&sql_command)?;
 

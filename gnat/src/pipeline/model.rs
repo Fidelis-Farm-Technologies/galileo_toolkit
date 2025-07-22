@@ -216,22 +216,22 @@ impl FileProcessor for ModelProcessor {
         }
 
         // load the parquet files into a temporary duckdb database
-        let tmp_input = format!("{}.input.tmp", self.model_list[0]);
-        let mut db_input = duckdb_open(&tmp_input, 1);
-        let sql_command = format!(
-            "CREATE OR REPLACE TABLE flow AS SELECT * FROM read_parquet({}) WHERE {};",
-            parquet_list, self.filter
+        let current_utc: DateTime<Utc> = Utc::now();
+        let rfc3339_name: String = current_utc.to_rfc3339();
+        let tmp_input = format!(
+            "{}.{}.tmp",
+            self.model_list[0],
+            rfc3339_name.replace(":", "-")
         );
-        db_input
-            .execute_batch(&sql_command)
-            .map_err(|e| Error::new(std::io::ErrorKind::Other, format!("DuckDB error: {}", e)))?;
+        let mut db_input = duckdb_open(&tmp_input, 1);
 
         // check the number of days in the dataset
         // if there are not enough days, skip the model build
         println!("{}: checking dataset duration...", self.command);
         let sql_days_command = format!(
             "SELECT date_diff('day',first,last) 
-             FROM (SELECT MIN(stime) AS first, MAX(stime) AS last FROM flow);",
+             FROM (SELECT MIN(stime) AS first, MAX(stime) AS last FROM read_parquet({}));",
+            parquet_list
         );
         let mut stmt = db_input.prepare(&sql_days_command).map_err(|e| {
             Error::new(
@@ -256,8 +256,11 @@ impl FileProcessor for ModelProcessor {
         );
         // load observation list
         println!("{}: determining observation points...", self.command);
+        let sql_distinct = format!(
+            "SELECT DISTINCT observe, dvlan, proto FROM read_parquet({}) WHERE {} GROUP BY ALL ORDER BY ALL;",parquet_list, self.filter
+        );
         let mut stmt = db_input
-            .prepare("SELECT DISTINCT observe, dvlan, proto FROM flow GROUP BY ALL ORDER BY ALL;")
+            .prepare(&sql_distinct)
             .map_err(|e| Error::new(std::io::ErrorKind::Other, format!("DuckDB error: {}", e)))?;
         let record_iter = stmt
             .query_map([], |row| {
@@ -275,6 +278,7 @@ impl FileProcessor for ModelProcessor {
                 Error::new(std::io::ErrorKind::Other, format!("DuckDB error: {}", e))
             })?);
         }
+        let _ = db_input.close().expect("failed to close input database");
 
         // build histograms
         let mut distinct_models = HashMap::new();
@@ -301,36 +305,36 @@ impl FileProcessor for ModelProcessor {
                 severe: 0.0,
                 filter: "".to_string(),
             };
-            let _ = model.build(&db_input, &self.feature_list, &self.filter);
+            let _ = model
+                .build(&parquet_list, &self.feature_list, &self.filter)
+                .map_err(|e| {
+                    Error::new(std::io::ErrorKind::Other, format!("build error: {}", e))
+                })?;
             distinct_models.insert(distinct_key, model);
         }
+
         println!("{}: done", self.command);
 
-        let tmp_output = format!("{}.output.tmp", self.model_list[0]);
+        let current_utc: DateTime<Utc> = Utc::now();
+        let rfc3339_name: String = current_utc.to_rfc3339();
+        let tmp_output = format!(
+            "{}.{}.tmp",
+            self.model_list[0],
+            rfc3339_name.replace(":", "-")
+        );
         let mut db_output = duckdb_open(&tmp_output, 1);
+
         // serialize to duckdb
         for (distinct_key, model) in distinct_models.iter() {
             println!(
                 "{}: serializing HBOS model [{}]",
                 self.command, distinct_key
             );
-            let _ = model.serialize(&mut db_output);
+            let _ = model.serialize(&mut db_output).map_err(|e| {
+                Error::new(std::io::ErrorKind::Other, format!("serialize error: {}", e))
+            })?;
         }
         println!("{}: done", self.command);
-        let _ = db_output.close();
-        let _ = db_input.close();
-
-        // reopen the input database to summarize the HBOS models
-        // this is done to avoid memory issues with large datasets
-        let mut db_input = duckdb_open(&tmp_input, 1);
-        let mut db_output = duckdb_open(&tmp_output, 1);
-        let sql_command = format!(
-            "CREATE OR REPLACE TABLE flow AS SELECT * FROM read_parquet({}) WHERE {};",
-            parquet_list, self.filter
-        );
-        db_input
-            .execute_batch(&sql_command)
-            .map_err(|e| Error::new(std::io::ErrorKind::Other, format!("DuckDB error: {}", e)))?;
 
         // summarize hbos
         for (distinct_key, model) in distinct_models.iter_mut() {
@@ -338,18 +342,20 @@ impl FileProcessor for ModelProcessor {
                 "{}: calculating HBOS summary [{}]",
                 self.command, distinct_key
             );
-            let _ = model.summarize(&mut db_input, &mut db_output);
+            let _ = model
+                .summarize(&parquet_list, &mut db_output)
+                .map_err(|e| {
+                    Error::new(std::io::ErrorKind::Other, format!("summarize error: {}", e))
+                })?;
         }
         let _ = db_output.close();
-        let _ = db_input.close();
         println!("{}: done", self.command);
 
-        
         if Path::new(&tmp_input).exists() {
             fs::remove_file(&tmp_input).map_err(|e| {
                 Error::new(
                     std::io::ErrorKind::Other,
-                    format!("failed to rename backup model: {}", e),
+                    format!("failed to remove file: {}", e),
                 )
             })?;
         }

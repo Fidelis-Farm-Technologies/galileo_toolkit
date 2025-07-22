@@ -31,7 +31,7 @@ impl TimeCategoryHistogram {
         TimeCategoryHistogram {
             name: name.to_string(),
             count: 0,
-            filter: String::new(),
+            filter: filter.to_string(),
             map: HashMap::new(),
         }
     }
@@ -115,8 +115,8 @@ impl TimeCategoryHistogram {
         proto: &str,
     ) -> Result<(), duckdb::Error> {
         let sql_command = format!(
-            "SELECT {} FROM flow WHERE observe='{}' AND dvlan = {} AND proto='{}' AND {};",
-            self.name, observe, vlan, proto, self.filter
+            "SELECT {} FROM flow WHERE {};",
+            self.name, self.filter
         );
         let mut stmt = db.prepare(&sql_command)?;
 

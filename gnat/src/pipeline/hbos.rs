@@ -154,12 +154,12 @@ impl HbosProcessor {
                         std: row.get(7).expect("missing value"),
                         mad: row.get(8).expect("missing value"),
                         median: row.get(9).expect("missing value"),
-                        quantile: row.get(10).expect("quantile value"),
-                        low: row.get(11).expect("quantile value"),
-                        medium: row.get(12).expect("quantile value"),
-                        high: row.get(13).expect("quantile value"),
-                        severe: row.get(14).expect("quantile value"),
-                        filter: row.get(15).expect("missing filter"),
+                        quantile: row.get(10).expect("missing value"),
+                        low: row.get(11).expect("missing value"),
+                        medium: row.get(12).expect("missing value"),
+                        high: row.get(13).expect("missing value"),
+                        severe: row.get(14).expect("missing value"),                      
+                        filter: row.get(15).expect("missing value"),                      
                     })
                 })
                 .expect("query row");
@@ -312,6 +312,7 @@ impl FileProcessor for HbosProcessor {
             // If loading the model fails,
             // it is because the model db does not exit,
             // therefore, just forward the data
+            println!("{}: model does not exists; skipping...", self.command);
             let _ = self.forward(&parquet_list, &self.output_list.clone());
             return Ok(());
         }
@@ -375,7 +376,15 @@ impl FileProcessor for HbosProcessor {
                     }
                     Some(model) => model,
                 };
-                let _ = histogram_model.score(&mut db_in, &mut db_out);
+
+                let _ = histogram_model
+                    .score(&mut db_in, &mut db_out)
+                    .map_err(|e| {
+                        Error::new(
+                            std::io::ErrorKind::Other,
+                            format!("hbos scoring error: {}", e),
+                        )
+                    })?;
             }
             let _ = db_in.close();
         }
@@ -393,7 +402,9 @@ impl FileProcessor for HbosProcessor {
             .map_err(|e| Error::new(std::io::ErrorKind::Other, format!("DuckDB error: {}", e)))?;
         let _ = db_out.close();
 
-        fs::rename(&tmp_filename, &final_filename)?;
+        if Path::new(&tmp_filename).exists() {
+            fs::rename(&tmp_filename, &final_filename)?;
+        }
 
         if Path::new(&self.model_spec).exists() {
             let mtime = HbosProcessor::file_modified_time_in_seconds(&self.model_spec);

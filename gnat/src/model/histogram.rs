@@ -24,21 +24,6 @@ pub const DEFAULT_ASN_MODULUS: i64 = 8192;
 pub const NO_MODULUS: i64 = 0;
 pub const MINIMUM_DAYS: u32 = 2;
 
-pub static MODEL_SUMMARY: &str = "CREATE TABLE IF NOT EXISTS model_summary
-(
-    observe VARCHAR,
-    vlan INTEGER,
-    proto VARCHAR,
-    name VARCHAR,
-    min FLOAT,
-    max FLOAT,
-    skewness FLOAT,
-    avg FLOAT,
-    stdev FLOAT,
-    mad FLOAT,
-    median FLOAT,                
-    count UBIGINT,
-);";
 pub static MODEL_DISTINCT_FEATURE: &str =
     "SELECT DISTINCT name FROM histogram_summary GROUP BY ALL ORDER BY ALL;";
 pub static PARQUET_DISTINCT_OBSERVATIONS: &str = "SELECT DISTINCT observe, dvlan, proto FROM flow WHERE proto='tcp' OR proto='udp' GROUP BY ALL ORDER BY ALL;";
@@ -120,7 +105,8 @@ pub static HBOS_SUMMARY: &str = "CREATE TABLE IF NOT EXISTS hbos_summary
     low FLOAT,
     medium FLOAT,
     high FLOAT,
-    severe FLOAT
+    severe FLOAT,
+    filter VARCHAR
 );";
 
 

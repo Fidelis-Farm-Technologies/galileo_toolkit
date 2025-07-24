@@ -769,7 +769,8 @@ impl HistogramModels {
             hbos_summary.low,
             hbos_summary.medium,
             hbos_summary.high,
-            hbos_summary.severe
+            hbos_summary.severe,
+            hbos_summary.filter
         ])?;
         let _ = appender.flush();
         drop(appender);

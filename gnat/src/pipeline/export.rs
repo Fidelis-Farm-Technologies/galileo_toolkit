@@ -55,15 +55,18 @@ impl ExportProcessor {
 
         let format = options.get("format").expect("expected format");
         let filter = options.get("filter").expect("expected filter");
+
         let field_list = options.get("fields").expect("expected format");
 
-        let list: Vec<String> = field_list.split(",").map(str::to_string).collect();
-        for field in &list {
-            if !FIELDS.contains(&field.as_str()) {
-                return Err(Error::other("field list contains invalid field"));
+        let mut list: Vec<String> = Vec::new();
+        if !field_list.is_empty() {
+            list = field_list.split(",").map(str::to_string).collect();
+            for field in &list {
+                if !FIELDS.contains(&field.as_str()) {
+                    return Err(Error::other("field list contains invalid field"));
+                }
             }
         }
-
         // Validate the output directory
         if !output.is_empty() {
             let output_path = std::path::Path::new(output);

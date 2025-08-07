@@ -392,7 +392,9 @@ impl FileProcessor for HbosProcessor {
         println!("{}: transforming data...", self.command);
         let sql_transform_command = format!(
             "CREATE OR REPLACE TABLE flow AS SELECT * FROM read_parquet({});
-             UPDATE flow SET hbos_score = score_table.hbos_score FROM score_table WHERE flow.id = score_table.id;
+             UPDATE flow 
+               SET hbos_score = score_table.hbos_score, hbos_severity = score_table.hbos_severity 
+               FROM score_table WHERE flow.id = score_table.id;
              COPY (SELECT * FROM flow) TO '{}' (FORMAT parquet, COMPRESSION zstd, ROW_GROUP_SIZE 100_000);",
             parquet_list, tmp_filename
         );

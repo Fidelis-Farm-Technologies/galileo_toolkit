@@ -102,7 +102,6 @@ impl RuleProcessor {
         let rules: Vec<String> = Vec::new();
         let histogram_map: HashMap<String, HistogramModels> = HashMap::new();
         let distinct_features: Vec<String> = Vec::new();
-        //let sql_table_schema = String::from("");
 
         let mut input_list = Vec::<String>::new();
         input_list.push(input.to_string());
@@ -138,12 +137,17 @@ impl RuleProcessor {
             );
             return Err(Error::other(error_msg));
         }
-        self.rules = RuleProcessor::load_rule_file(&self.rule_spec).expect("loading rule file");
+        self.rules = RuleProcessor::load_rule_file(&self.rule_spec)?;
 
         let mut model_conn = duckdb_open_readonly(&self.model_spec, 2);
         let mut stmt = model_conn
             .prepare(MODEL_DISTINCT_OBSERVATIONS)
-            .expect("sql prepare");
+            .map_err(|e| {
+                Error::new(
+                    std::io::ErrorKind::Other,
+                    format!("DuckDB prepare error: {}", e),
+                )
+            })?;
 
         let record_iter = stmt
             .query_map([], |row| {
@@ -153,7 +157,12 @@ impl RuleProcessor {
                     proto: row.get(2).expect("missing proto"),
                 })
             })
-            .expect("query map");
+            .map_err(|e| {
+                Error::new(
+                    std::io::ErrorKind::Other,
+                    format!("DuckDB prepare error: {}", e),
+                )
+            })?;
 
         let mut distinct_observation: Vec<DistinctObservation> = Vec::new();
         for record in record_iter {
@@ -201,7 +210,12 @@ impl RuleProcessor {
             .query_map([], |row| {
                 Ok(row.get::<_, String>(0).expect("missing feature"))
             })
-            .expect("expected query map");
+            .map_err(|e| {
+                Error::new(
+                    std::io::ErrorKind::Other,
+                    format!("DuckDB prepare error: {}", e),
+                )
+            })?;
 
         for element in feature_iter {
             self.distinct_features
@@ -418,14 +432,32 @@ impl FileProcessor for RuleProcessor {
                 return Ok(());
             }
         }
-        if let Err(_e) = self.load_model() {
+        if let Err(e) = self.load_model() {
             // If loading the model fails,
             // it is because the model db does not exit,
             // therefore, just forward the data
+            eprintln!("{}: {}", self.command, e);
             let _ = self.forward(&parquet_list, &self.output_list.clone())?;
             return Ok(());
         }
 
+        let current_utc: DateTime<Utc> = Utc::now();
+        let rfc3339_name: String = current_utc.to_rfc3339();
+
+        let tmp_parquet_filename = format!(
+            "{}/.gnat-{}-{}.parquet",
+            self.output_list[0],
+            self.command,
+            rfc3339_name.replace(":", "-")
+        );
+        let parquet_filename = format!(
+            "{}/gnat-{}-{}.parquet",
+            self.output_list[0],
+            self.command,
+            rfc3339_name.replace(":", "-")
+        );
+
+        let mut db_out = duckdb_open_memory(2);
         let mut db_in = duckdb_open_memory(2);
         let sql_command = format!(
             "CREATE TABLE flow AS SELECT * FROM read_parquet({});",
@@ -444,82 +476,85 @@ impl FileProcessor for RuleProcessor {
             })?;
         }
 
-        // load distinct observation models
-        println!("{}: determining observation points...", self.command);
-        let mut stmt = db_in
-            .prepare(PARQUET_DISTINCT_OBSERVATIONS)
-            .map_err(|e| Error::new(std::io::ErrorKind::Other, format!("DuckDB error: {}", e)))?;
-        let record_iter = stmt
-            .query_map([], |row| {
-                Ok(DistinctObservation {
-                    observe: row.get(0).expect("missing value"),
-                    vlan: row.get(1).expect("missing dvlan"),
-                    proto: row.get(2).expect("missing proto"),
-                })
-            })
-            .map_err(|e| Error::new(std::io::ErrorKind::Other, format!("DuckDB error: {}", e)))?;
-        let mut distinct_observation_models: Vec<DistinctObservation> = Vec::new();
-        for record in record_iter {
-            distinct_observation_models.push(record.map_err(|e| {
-                Error::new(std::io::ErrorKind::Other, format!("DuckDB error: {}", e))
-            })?);
-        }
-
-        let current_utc: DateTime<Utc> = Utc::now();
-        let rfc3339_name: String = current_utc.to_rfc3339();
-
-        let tmp_parquet_filename = format!(
-            ".gnat-{}-{}.parquet",
-            self.command,
-            rfc3339_name.replace(":", "-")
+        // count the number of triggers
+        let sql_trigger_count = format!(
+            "SELECT count() 
+             FROM flow
+             WHERE trigger > 0;",
         );
-        let parquet_filename = format!(
-            "{}/gnat-{}-{}.parquet",
-            self.output_list[0],
-            self.command,
-            rfc3339_name.replace(":", "-")
-        );
-
-        println!("{}: processing...", self.command);
-
-        let mut db_out = duckdb_open_memory(2);
-        let mut trigger_count = 0;
-        {
-            db_out.execute_batch("CREATE TABLE trigger_table (id UUID,trigger TINYINT,risk_list VARCHAR[],hbos_map map(VARCHAR,DOUBLE));")
-                .map_err(|e| Error::new(std::io::ErrorKind::Other, format!("DuckDB error: {}", e)))?;
-            for record in &distinct_observation_models {
-                let distinct_key = format!("{}/{}/{}", record.observe, record.vlan, record.proto);
-                let histogram_model =
-                    self.histogram_map.get_mut(&distinct_key).ok_or_else(|| {
-                        Error::new(
-                            std::io::ErrorKind::Other,
-                            format!("missing histogram model: {}", distinct_key),
-                        )
-                    })?;
-                let triggers = histogram_model
-                    .generate_trigger_data(&mut db_in, &mut db_out)
-                    .map_err(|e| {
-                        Error::new(
-                            std::io::ErrorKind::Other,
-                            format!("generate_trigger_data error: {}", e),
-                        )
-                    })?;
-                if triggers > 0 {
-                    println!("{}: [{}] {} triggers", self.command, distinct_key, triggers);
-                }
-                trigger_count += triggers;
-            }
-        }
-        let _ = db_in.close();
+        let mut stmt = db_in.prepare(&sql_trigger_count).map_err(|e| {
+            Error::new(
+                std::io::ErrorKind::Other,
+                format!("DuckDB prepare error: {}", e),
+            )
+        })?;
+        let trigger_count = stmt
+            .query_row([], |row| Ok(row.get::<_, u64>(0).expect("missing count")))
+            .expect("missing count");
 
         if trigger_count > 0 {
+            println!("{}: {} triggers generated", self.command, trigger_count);
+
+            // load distinct observation models
+            println!("{}: determining observation points...", self.command);
+            let mut stmt = db_in.prepare(PARQUET_DISTINCT_OBSERVATIONS).map_err(|e| {
+                Error::new(std::io::ErrorKind::Other, format!("DuckDB error: {}", e))
+            })?;
+            let record_iter = stmt
+                .query_map([], |row| {
+                    Ok(DistinctObservation {
+                        observe: row.get(0).expect("missing value"),
+                        vlan: row.get(1).expect("missing dvlan"),
+                        proto: row.get(2).expect("missing proto"),
+                    })
+                })
+                .map_err(|e| {
+                    Error::new(std::io::ErrorKind::Other, format!("DuckDB error: {}", e))
+                })?;
+            let mut distinct_observation_models: Vec<DistinctObservation> = Vec::new();
+            for record in record_iter {
+                distinct_observation_models.push(record.map_err(|e| {
+                    Error::new(std::io::ErrorKind::Other, format!("DuckDB error: {}", e))
+                })?);
+            }
+
+            println!("{}: processing...", self.command);
+
+            {
+                db_out.execute_batch("CREATE TABLE trigger_table (id UUID,trigger TINYINT,risk_list VARCHAR[],hbos_map map(VARCHAR,DOUBLE));")
+                .map_err(|e| Error::new(std::io::ErrorKind::Other, format!("DuckDB error: {}", e)))?;
+                for record in &distinct_observation_models {
+                    let distinct_key =
+                        format!("{}/{}/{}", record.observe, record.vlan, record.proto);
+                    let histogram_model =
+                        self.histogram_map.get_mut(&distinct_key).ok_or_else(|| {
+                            Error::new(
+                                std::io::ErrorKind::Other,
+                                format!("missing histogram model: {}", distinct_key),
+                            )
+                        })?;
+                    let triggers = histogram_model
+                        .generate_trigger_data(&mut db_in, &mut db_out)
+                        .map_err(|e| {
+                            Error::new(
+                                std::io::ErrorKind::Other,
+                                format!("generate_trigger_data error: {}", e),
+                            )
+                        })?;
+                    if triggers > 0 {
+                        println!("{}: [{}] {} triggers", self.command, distinct_key, triggers);
+                    }
+                }
+            }
+            let _ = db_in.close();
+
             println!("{}: transforming data...", self.command);
             let sql_transform_command = format!(
                 "CREATE TABLE flow AS SELECT * FROM read_parquet({});
                  UPDATE flow
-                   SET trigger = flow_meta.trigger,ndpi_risk_list = flow_meta.risk_list,hbos_map = flow_meta.hbos_map
-                   FROM flow_meta
-                   WHERE flow.id = flow_meta.id;
+                   SET trigger = trigger_table.trigger,ndpi_risk_list = trigger_table.risk_list,hbos_map = trigger_table.hbos_map
+                   FROM trigger_table
+                   WHERE flow.id = trigger_table.id;
                  COPY (SELECT * FROM flow) TO '{}' (FORMAT parquet, COMPRESSION zstd, ROW_GROUP_SIZE 100_000);",
                 parquet_list, tmp_parquet_filename
             );

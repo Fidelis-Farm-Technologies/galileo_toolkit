@@ -374,7 +374,7 @@ impl HistogramModels {
 
     pub fn score(&mut self, db_in: &mut Connection, db_out: &mut Connection) -> Result<u64, Error> {
         db_out
-            .execute_batch("CREATE OR REPLACE TABLE score_table (id UUID, hbos_score DOUBLE);")?;
+            .execute_batch("CREATE OR REPLACE TABLE score_table (id UUID, hbos_score DOUBLE, hbos_severity UTINYINT);")?;
 
         let mut score_appender = db_out.appender("score_table")?;
 
@@ -498,7 +498,11 @@ impl HistogramModels {
 
             count += 1;
 
-            score_appender.append_row(params![flow_record.id, flow_record.hbos_score])?;
+            score_appender.append_row(params![
+                flow_record.id,
+                flow_record.hbos_score,
+                flow_record.hbos_severity
+            ])?;
         }
         score_appender.flush()?;
         drop(score_appender);

@@ -113,8 +113,14 @@ impl FileProcessor for ImportProcessor {
     fn delete_files(&self) -> bool {
         true
     }
-    fn process(&mut self, file_list: &Vec<String>) -> Result<(), Error> {
+    fn process(&mut self, file_list: &Vec<String>) -> Result<(), Error> {      
         for file in file_list.iter() {
+            if !file.ends_with(&self.extension) {
+                return Err(Error::other(format!(
+                    "file {} does not match expected extension {}",
+                    file, self.extension
+                )));
+            }
             //TODO: handle file prefix. Shift responsibility to the collector
             let mut observation = self.observation.clone();
             if let Some((observe_prefix, _)) = file.split_once('-') {
@@ -122,8 +128,7 @@ impl FileProcessor for ImportProcessor {
                     .split('/')
                     .last()
                     .unwrap_or(observation.as_str())
-                    .to_string();
-                //observation = observe_prefix.to_string();
+                    .to_string();               
             }
 
             println!(

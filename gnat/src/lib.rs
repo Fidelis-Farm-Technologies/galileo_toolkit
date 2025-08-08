@@ -387,7 +387,7 @@ pub mod pipeline {
             let command = self.get_command().clone();
             let mut file_list: Vec<String> = Vec::new();
             let mut pass_list: Vec<String> = Vec::new();
-
+            println!("process_directory");
             let mut total_files_processed = 0;
             loop {
                 file_list.clear();
@@ -509,12 +509,15 @@ pub mod pipeline {
 
             println!("{}: starting up.", command);
 
-            loop {
+            // wait for the initial interval to start
+            if interval != Interval::ONCE {
                 if !sleep_interval(&interval) {
                     println!("{}: shutting down.", command);
                     return Ok(());
                 }
+            }
 
+            loop {
                 let start = Instant::now();
                 let mut total_files_processed = 0;
                 // process all input directories
@@ -532,7 +535,11 @@ pub mod pipeline {
                         start.elapsed()
                     );
                 }
-               
+
+                if !sleep_interval(&interval) {
+                    println!("{}: shutting down.", command);
+                    return Ok(());
+                }
             }
         }
     }

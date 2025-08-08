@@ -37,27 +37,40 @@ use crate::pipeline::Interval;
 #[derive(Clone, Serialize, Deserialize)]
 pub struct RuleJsonStructure {
     action: String,
+    #[serde(default = "default_string")]    
     observe: String,
-    #[serde(skip)]
+    #[serde(default = "default_string")]
     proto: String,
-    #[serde(skip)]
+    #[serde(default = "default_string")]
     saddr: String,
-    #[serde(skip)]
+    #[serde(default = "default_u16")]
     sport: u16,
-    #[serde(skip)]
+    #[serde(default = "default_string")]
     daddr: String,
-    #[serde(skip)]
+    #[serde(default = "default_u16")]
     dport: u16,
-    #[serde(skip)]
-    appid: String,
-    #[serde(skip)]
+    #[serde(default = "default_string")]
+    appid: String,    
+    #[serde(default = "default_string")]
     orient: String,
-    #[serde(skip)]
+    #[serde(default = "default_string")]
     tag: String,
-    #[serde(skip)]
+    #[serde(default = "default_u8")]
     risk_severity: u8,
-    #[serde(skip)]
+    #[serde(default = "default_u8")]
     hbos_severity: u8,
+}
+
+fn default_string() -> String {
+    "".to_owned()
+}
+
+fn default_u8() -> u8 {
+    0
+}
+
+fn default_u16() -> u16 {
+    0
 }
 
 pub struct RuleProcessor {
@@ -204,8 +217,14 @@ impl RuleProcessor {
         // load the distinct features
         //
         let mut stmt = model_conn
-            .prepare("select distinct name from histogram_summary;")
-            .expect("sql prepare");
+            .prepare("SELECT DISTINCT name FROM histogram_summary;")
+            .map_err(|e| {
+                Error::new(
+                    std::io::ErrorKind::Other,
+                    format!("DuckDB prepare error: {}", e),
+                )
+            })?;
+
         let feature_iter = stmt
             .query_map([], |row| {
                 Ok(row.get::<_, String>(0).expect("missing feature"))
@@ -213,7 +232,7 @@ impl RuleProcessor {
             .map_err(|e| {
                 Error::new(
                     std::io::ErrorKind::Other,
-                    format!("DuckDB prepare error: {}", e),
+                    format!("DuckDB query map error: {}", e),
                 )
             })?;
 
@@ -250,7 +269,7 @@ impl RuleProcessor {
         println!("{} policies found", policies.len());
         let mut terms = 0;
         for rule in policies.clone().into_iter() {
-            let mut rule_line = String::from("SET trigger = -1 WHERE ");
+            let mut rule_line = String::from("SET trigger = -1 WHERE "); // ignore by default
             if rule.action == "trigger" {
                 rule_line = String::from("SET trigger = 1 WHERE ");
             } else if rule.action != "ignore" {
@@ -362,7 +381,11 @@ impl RuleProcessor {
                 rule_line.push_str("hbos_severity >= ");
                 rule_line.push_str(&rule.hbos_severity.to_string());
             }
-            rules.push(rule_line);
+
+            if terms > 0 {
+                println!("\tRULE: {} ", rule_line);
+                rules.push(rule_line);
+            }
         }
 
         println!(".done.");
@@ -489,12 +512,11 @@ impl FileProcessor for RuleProcessor {
             )
         })?;
         let trigger_count = stmt
-            .query_row([], |row| Ok(row.get::<_, u64>(0).expect("missing count")))
-            .expect("missing count");
+            .query_row([], |row| Ok(row.get::<_, u64>(0)?))
+            .map_err(|e| Error::new(std::io::ErrorKind::Other, format!("DuckDB error: {}", e)))?;
+        println!("{}: {} triggers generated", self.command, trigger_count);
 
         if trigger_count > 0 {
-            println!("{}: {} triggers generated", self.command, trigger_count);
-
             // load distinct observation models
             println!("{}: determining observation points...", self.command);
             let mut stmt = db_in.prepare(PARQUET_DISTINCT_OBSERVATIONS).map_err(|e| {
@@ -519,7 +541,6 @@ impl FileProcessor for RuleProcessor {
             }
 
             println!("{}: processing...", self.command);
-
             {
                 db_out.execute_batch("CREATE TABLE trigger_table (id UUID,trigger TINYINT,risk_list VARCHAR[],hbos_map map(VARCHAR,DOUBLE));")
                 .map_err(|e| Error::new(std::io::ErrorKind::Other, format!("DuckDB error: {}", e)))?;

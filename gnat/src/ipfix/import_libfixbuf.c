@@ -79,6 +79,8 @@ ycOpenListener(
             break;
         if (fbTemplateAppendSpecArray(gnat->template, g_yaf_flow_spec, YTF_ALL, err) == FALSE)
             break;
+        //if (fbTemplateAppendSpecArray(gnat->template, yaf_process_stats_spec, YTF_ALL, err) == FALSE)
+        //    break;            
         gnat->session = fbSessionAlloc(gnat->model);
         if (gnat->session == NULL)
             break;
@@ -127,7 +129,9 @@ ycOpenListener(
         ndpi_set_protocol_detection_bitmask2(gnat->ndpi_ctx, &protos);
         ndpi_finalize_initialization(gnat->ndpi_ctx);
 
+        // -------------------------------------------------------------------------------
         // GeoIP stuff
+        // -------------------------------------------------------------------------------
 
         //
         // maxmind ASN
@@ -252,6 +256,7 @@ ycOpenReader(
             break;
         }
     } while (0);
+
     if (!gnat->input_buf)
     {
         if (gnat->input_buf)

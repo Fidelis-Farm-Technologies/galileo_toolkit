@@ -242,7 +242,8 @@ impl FileProcessor for TagProcessor {
                 return Ok(());
             }
         }
-        let mem_conn = duckdb_open_memory(2);
+        let mem_conn = duckdb_open_memory(1)
+            .map_err(|e| Error::new(std::io::ErrorKind::Other, format!("DuckDB error: {}", e)))?;
         let sql_command = format!(
             "CREATE TABLE flow AS SELECT * FROM read_parquet({})",
             parquet_list

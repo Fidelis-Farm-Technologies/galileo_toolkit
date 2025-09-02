@@ -319,7 +319,7 @@ static fbInfoElementSpec_t g_yaf_flow_spec[] = {
     FB_IESPEC_NULL
 };
 
-#if defined(ENABLE_PROCESS_STATS)
+
 // for future use
 static fbInfoElementSpec_t yaf_process_stats_spec[] = {
     { "observationDomainId",                4, 0 },
@@ -341,25 +341,7 @@ static fbInfoElementSpec_t yaf_process_stats_spec[] = {
     FB_IESPEC_NULL
 };
 
-typedef struct yfIpfixStats_st {
-    uint32_t   observationDomainId;
-    uint32_t   exportingProcessId;
-    uint32_t   exporterIPv4Address;
-    uint32_t   observationTimeSeconds;
-    uint64_t   systemInitTimeMilliseconds;
-    uint64_t   exportedFlowTotalCount;
-    uint64_t   packetTotalCount;
-    uint64_t   droppedPacketTotalCount;
-    uint64_t   ignoredPacketTotalCount;
-    uint64_t   notSentPacketTotalCount;
-    uint32_t   yafExpiredFragmentCount;
-    uint32_t   yafAssembledFragmentCount;
-    uint32_t   flowTableFlushEvents;
-    uint32_t   yafFlowTablePeakCount;
-    uint32_t   yafMeanFlowRate;
-    uint32_t   yafMeanPacketRate;
-} YAF_STATS_RECORD;
-#endif
+#if defined(COMMENT_OUT)
 
 typedef struct yfConfig_st {
     char              *inspec;
@@ -439,3 +421,4 @@ typedef struct yfContext_st {
 } yfContext_t;
 
 
+#endif

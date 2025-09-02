@@ -6,7 +6,7 @@
  * See license information in LICENSE.
  */
 
-use duckdb::{params, Connection, Error};
+use duckdb::{params, Connection};
 
 use crate::model::histogram::ipaddr_category::IpAddrCategoryHistogram;
 use crate::model::histogram::number::NumberHistogram;
@@ -23,12 +23,12 @@ use crate::model::table::DistinctObserveRecord;
 use crate::model::table::HbosSummaryRecord;
 use crate::model::table::MemFlowRecord;
 use crate::utils::duckdb::duckdb_open;
-
 use chrono::Datelike;
 use chrono::{DateTime, Utc};
 use duckdb::{Appender, DropBehavior};
 use std::collections::HashMap;
 use std::fs;
+use std::io::Error;
 use std::path::Path;
 
 enum Severity {
@@ -191,6 +191,12 @@ impl HistogramModels {
         self.medium = hbos_summary.medium;
         self.high = hbos_summary.high;
         self.severe = hbos_summary.severe;
+
+        //println!(
+        //    "deserialize: low={}, medium={}, high={}, severe={}",
+        //    self.low, self.medium, self.high, self.severe
+        //);
+
         Ok(())
     }
 
@@ -281,7 +287,9 @@ impl HistogramModels {
             let _ = db_out.execute_batch("BEGIN TRANSACTION;");
 
             for record in record_iter {
-                let record = record?;
+                let record = record.map_err(|e| {
+                    Error::new(std::io::ErrorKind::Other, format!("DuckDB error: {}", e))
+                })?;
 
                 let mut is_first = true;
                 let risk_bits: u64 = record.risk_bits;
@@ -374,123 +382,173 @@ impl HistogramModels {
 
     pub fn score(&mut self, db_in: &mut Connection, db_out: &mut Connection) -> Result<u64, Error> {
         db_out
-            .execute_batch("CREATE OR REPLACE TABLE score_table (id UUID, hbos_score DOUBLE, hbos_severity UTINYINT);")?;
+            .execute_batch("CREATE OR REPLACE TABLE score_table (id UUID, hbos_score DOUBLE, hbos_severity UTINYINT);").        
+        map_err(|e| Error::new(std::io::ErrorKind::Other, format!("DuckDB error: {}", e)))?;
 
-        let mut score_appender = db_out.appender("score_table")?;
+        db_out
+            .execute_batch("CREATE OR REPLACE TABLE hbos_map_table (id UUID,risk_list VARCHAR[],hbos_map map(VARCHAR,DOUBLE));")
+                .map_err(|e| Error::new(std::io::ErrorKind::Other, format!("DuckDB error: {}", e)))?;
+
+        let mut score_appender = db_out
+            .appender("score_table")
+            .map_err(|e| Error::new(std::io::ErrorKind::Other, format!("DuckDB error: {}", e)))?;
 
         let sql_command = format!(
-            "SELECT * EXCLUDE(tag, hbos_map, ndpi_risk_list) FROM flow WHERE observe='{}' AND dvlan = {} AND proto='{}' AND {};", 
+            "SELECT * EXCLUDE(tag, hbos_map, ndpi_risk_list) FROM flow WHERE observe='{}' AND dvlan = {} AND proto='{}' AND ({});", 
             self.observe, self.vlan, self.proto, self.filter
         );
-        let mut stmt = db_in.prepare(&sql_command)?;
-        let record_iter = stmt.query_map([], |row| {
-            Ok(MemFlowRecord {
-                stream: row.get(0).expect("missing value"),
-                id: row.get(1).expect("missing value"),
-                observe: row.get(2).expect("missing value"),
-                stime: row.get(3).expect("missing value"),
-                etime: row.get(4).expect("missing value"),
-                dur: row.get(5).expect("missing value"),
-                rtt: row.get(6).expect("missing value"),
-                pcr: row.get(7).expect("missing value"),
-                proto: row.get(8).expect("missing value"),
-                saddr: row.get(9).expect("missing value"),
-                daddr: row.get(10).expect("missing value"),
-                sport: row.get(11).expect("missing value"),
-                dport: row.get(12).expect("missing value"),
-                iflags: row.get(13).expect("missing value"),
-                uflags: row.get(14).expect("missing value"),
-                stcpseq: row.get(15).expect("missing value"),
-                dtcpseq: row.get(16).expect("missing value"),
-                svlan: row.get(17).expect("missing value"),
-                dvlan: row.get(18).expect("missing value"),
-                spkts: row.get(19).expect("missing value"),
-                dpkts: row.get(20).expect("missing value"),
-                sbytes: row.get(21).expect("missing value"),
-                dbytes: row.get(22).expect("missing value"),
-                sentropy: row.get(23).expect("missing value"),
-                dentropy: row.get(24).expect("missing value"),
-                siat: row.get(25).expect("missing value"),
-                diat: row.get(26).expect("missing value"),
-                sstdev: row.get(27).expect("missing value"),
-                dstdev: row.get(28).expect("missing value"),
-                dtcpurg: row.get(29).expect("missing value"),
-                stcpurg: row.get(30).expect("missing value"),
-                ssmallpktcnt: row.get(31).expect("missing value"),
-                dsmallpktcnt: row.get(32).expect("missing value"),
-                slargepktcnt: row.get(33).expect("missing value"),
-                dlargepktcnt: row.get(34).expect("missing value"),
-                snonemptypktcnt: row.get(35).expect("missing value"),
-                dnonemptypktcnt: row.get(36).expect("missing value"),
-                sfirstnonemptycnt: row.get(37).expect("missing value"),
-                dfirstnonemptycnt: row.get(38).expect("missing value"),
-                smaxpktsize: row.get(39).expect("missing value"),
-                dmaxpktsize: row.get(40).expect("missing value"),
-                sstdevpayload: row.get(41).expect("missing value"),
-                dstdevpayload: row.get(42).expect("missing value"),
-                spd: row.get(43).expect("missing value"),
-                reason: row.get(44).expect("missing value"),
-                smac: row.get(45).expect("missing value"),
-                dmac: row.get(46).expect("missing value"),
-                scountry: row.get(47).expect("missing value"),
-                dcountry: row.get(48).expect("missing value"),
-                sasn: row.get(49).expect("missing value"),
-                dasn: row.get(50).expect("missing value"),
-                sasnorg: row.get(51).expect("missing value"),
-                dasnorg: row.get(52).expect("missing value"),
-                orient: row.get(53).expect("missing value"),
-                hbos_score: row.get(54).expect("missing value"),
-                hbos_severity: row.get(55).expect("missing value"),
-                appid: row.get(56).expect("missing value"),
-                category: row.get(57).unwrap_or("".to_string()),
-                risk_bits: row.get(58).expect("missing value"),
-                risk_score: row.get(59).expect("missing value"),
-                risk_severity: row.get(60).expect("missing value"),
-                trigger: row.get(61).expect("missing value"),
+        let mut stmt = db_in
+            .prepare(&sql_command)
+            .map_err(|e| Error::new(std::io::ErrorKind::Other, format!("DuckDB error: {}", e)))?;
+
+        let record_iter = stmt
+            .query_map([], |row| {
+                Ok(MemFlowRecord {
+                    stream: row.get(0).expect("missing value"),
+                    id: row.get(1).expect("missing value"),
+                    observe: row.get(2).expect("missing value"),
+                    stime: row.get(3).expect("missing value"),
+                    etime: row.get(4).expect("missing value"),
+                    dur: row.get(5).expect("missing value"),
+                    rtt: row.get(6).expect("missing value"),
+                    pcr: row.get(7).expect("missing value"),
+                    proto: row.get(8).expect("missing value"),
+                    saddr: row.get(9).expect("missing value"),
+                    daddr: row.get(10).expect("missing value"),
+                    sport: row.get(11).expect("missing value"),
+                    dport: row.get(12).expect("missing value"),
+                    iflags: row.get(13).expect("missing value"),
+                    uflags: row.get(14).expect("missing value"),
+                    stcpseq: row.get(15).expect("missing value"),
+                    dtcpseq: row.get(16).expect("missing value"),
+                    svlan: row.get(17).expect("missing value"),
+                    dvlan: row.get(18).expect("missing value"),
+                    spkts: row.get(19).expect("missing value"),
+                    dpkts: row.get(20).expect("missing value"),
+                    sbytes: row.get(21).expect("missing value"),
+                    dbytes: row.get(22).expect("missing value"),
+                    sentropy: row.get(23).expect("missing value"),
+                    dentropy: row.get(24).expect("missing value"),
+                    siat: row.get(25).expect("missing value"),
+                    diat: row.get(26).expect("missing value"),
+                    sstdev: row.get(27).expect("missing value"),
+                    dstdev: row.get(28).expect("missing value"),
+                    dtcpurg: row.get(29).expect("missing value"),
+                    stcpurg: row.get(30).expect("missing value"),
+                    ssmallpktcnt: row.get(31).expect("missing value"),
+                    dsmallpktcnt: row.get(32).expect("missing value"),
+                    slargepktcnt: row.get(33).expect("missing value"),
+                    dlargepktcnt: row.get(34).expect("missing value"),
+                    snonemptypktcnt: row.get(35).expect("missing value"),
+                    dnonemptypktcnt: row.get(36).expect("missing value"),
+                    sfirstnonemptycnt: row.get(37).expect("missing value"),
+                    dfirstnonemptycnt: row.get(38).expect("missing value"),
+                    smaxpktsize: row.get(39).expect("missing value"),
+                    dmaxpktsize: row.get(40).expect("missing value"),
+                    sstdevpayload: row.get(41).expect("missing value"),
+                    dstdevpayload: row.get(42).expect("missing value"),
+                    spd: row.get(43).expect("missing value"),
+                    reason: row.get(44).expect("missing value"),
+                    smac: row.get(45).expect("missing value"),
+                    dmac: row.get(46).expect("missing value"),
+                    scountry: row.get(47).expect("missing value"),
+                    dcountry: row.get(48).expect("missing value"),
+                    sasn: row.get(49).expect("missing value"),
+                    dasn: row.get(50).expect("missing value"),
+                    sasnorg: row.get(51).expect("missing value"),
+                    dasnorg: row.get(52).expect("missing value"),
+                    orient: row.get(53).expect("missing value"),
+                    hbos_score: row.get(54).expect("missing value"),
+                    hbos_severity: row.get(55).expect("missing value"),
+                    appid: row.get(56).expect("missing value"),
+                    category: row.get(57).unwrap_or("".to_string()),
+                    risk_bits: row.get(58).expect("missing value"),
+                    risk_score: row.get(59).expect("missing value"),
+                    risk_severity: row.get(60).expect("missing value"),
+                    trigger: row.get(61).expect("missing value"),
+                })
             })
-        })?;
+            .map_err(|e| Error::new(std::io::ErrorKind::Other, format!("DuckDB error: {}", e)))?;
 
         let mut count: u64 = 0;
         for record in record_iter {
-            let mut flow_record = record?;
-            let mut histogram_map: HashMap<String, f64> = HashMap::new();
+            let mut flow_record = record.map_err(|e| {
+                Error::new(std::io::ErrorKind::Other, format!("DuckDB error: {}", e))
+            })?;
             flow_record.hbos_score = 0.0;
+            let mut histogram_map: HashMap<String, f64> = HashMap::new();
 
+            //
+            // generate hbos map and score
+            //
             let mut hbos_score: f64 = 0.0;
+            let mut is_first_map = true;
+            let mut hbos_map = format!("map_from_entries([");
             for (name, histogram) in &mut self.numerical {
                 let feature_prob = histogram.get_probability(&flow_record);
+                if is_first_map {
+                    is_first_map = false;
+                } else {
+                    hbos_map.push_str(",");
+                }
+                hbos_map.push_str(&format!("{{k:'{}',v:{:.3}}}", name, feature_prob));
                 histogram_map.insert(name.to_string(), feature_prob);
                 hbos_score += (1.0 / feature_prob).log10();
             }
             for (name, histogram) in &mut self.numeric_category {
                 let feature_prob = histogram.get_probability(&flow_record);
+                if is_first_map {
+                    is_first_map = false;
+                } else {
+                    hbos_map.push_str(",");
+                }
+                hbos_map.push_str(&format!("{{k:'{}',v:{:.3}}}", name, feature_prob));
                 histogram_map.insert(name.to_string(), feature_prob);
                 hbos_score += (1.0 / feature_prob).log10();
             }
             for (name, histogram) in &mut self.string_category {
                 let feature_prob = histogram.get_probability(&flow_record);
+                if is_first_map {
+                    is_first_map = false;
+                } else {
+                    hbos_map.push_str(",");
+                }
+                hbos_map.push_str(&format!("{{k:'{}',v:{:.3}}}", name, feature_prob));
                 histogram_map.insert(name.to_string(), feature_prob);
                 hbos_score += (1.0 / feature_prob).log10();
             }
             for (name, histogram) in &mut self.ipaddr_category {
                 let feature_prob = histogram.get_probability(&flow_record);
+                if is_first_map {
+                    is_first_map = false;
+                } else {
+                    hbos_map.push_str(",");
+                }
+                hbos_map.push_str(&format!("{{k:'{}',v:{:.3}}}", name, feature_prob));
                 histogram_map.insert(name.to_string(), feature_prob);
                 hbos_score += (1.0 / feature_prob).log10();
             }
             for (name, histogram) in &mut self.time_category {
                 let feature_prob = histogram.get_probability(&flow_record);
+                if is_first_map {
+                    is_first_map = false;
+                } else {
+                    hbos_map.push_str(",");
+                }
+                hbos_map.push_str(&format!("{{k:'{}',v:{:.3}}}", name, feature_prob));
                 histogram_map.insert(name.to_string(), feature_prob);
                 hbos_score += (1.0 / feature_prob).log10();
             }
+            hbos_map.push_str("])");
             flow_record.hbos_score = hbos_score;
 
-            flow_record.hbos_severity = if hbos_score > self.severe {
+            flow_record.hbos_severity = if hbos_score >= self.severe {
                 Severity::Severe as u8
-            } else if hbos_score > self.high {
+            } else if hbos_score >= self.high {
                 Severity::High as u8
-            } else if hbos_score > self.medium {
+            } else if hbos_score >= self.medium {
                 Severity::Medium as u8
-            } else if hbos_score > self.low {
+            } else if hbos_score >= self.low {
                 Severity::Low as u8
             } else {
                 Severity::None as u8
@@ -498,13 +556,52 @@ impl HistogramModels {
 
             count += 1;
 
-            score_appender.append_row(params![
-                flow_record.id,
-                flow_record.hbos_score,
-                flow_record.hbos_severity
-            ])?;
+            score_appender
+                .append_row(params![
+                    flow_record.id,
+                    flow_record.hbos_score,
+                    flow_record.hbos_severity
+                ])
+                .map_err(|e| {
+                    Error::new(std::io::ErrorKind::Other, format!("DuckDB error: {}", e))
+                })?;
+
+            //
+            // generate risk list
+            //
+            let mut is_first_list = true;
+            let risk_bits: u64 = flow_record.risk_bits;
+            let mut risk_list = format!("list_value(");
+            if risk_bits > 0 {
+                for i in 0..64 {
+                    let bit_is_set = (risk_bits >> i) & 1 == 1;
+                    if bit_is_set {
+                        if is_first_list {
+                            is_first_list = false;
+                        } else {
+                            risk_list.push_str(",");
+                        }
+                        risk_list.push_str("'");
+                        risk_list.push_str(Self::riskname_by_index(i));
+                        risk_list.push_str("'");
+                    }
+                }
+            }
+            risk_list.push_str(")");
+            //
+            // insert hbos_map into hbos_map_table if severity > 0
+            //
+            if flow_record.hbos_severity > 0 || flow_record.risk_bits > 0 {
+                let sql_insert_command = format!(
+                    "INSERT INTO hbos_map_table BY POSITION VALUES ('{}', {}, {});",
+                    flow_record.id, risk_list, hbos_map
+                );
+                let _ = db_out.execute_batch(&sql_insert_command);
+            }
         }
-        score_appender.flush()?;
+        score_appender
+            .flush()
+            .map_err(|e| Error::new(std::io::ErrorKind::Other, format!("DuckDB error: {}", e)))?;
         drop(score_appender);
         Ok(count)
     }
@@ -574,18 +671,21 @@ impl HistogramModels {
         let rfc3339_name: String = current_utc.to_rfc3339();
 
         let db_input_file = format!("summarize.{}.tmp", rfc3339_name.replace(":", "-"));
-        let mut db_input = duckdb_open(&db_input_file, 1);
+        let mut db_input = duckdb_open(&db_input_file, 1)
+            .map_err(|e| Error::new(std::io::ErrorKind::Other, format!("DuckDB error: {}", e)))?;
 
         let sql_command = format!(
             "CREATE OR REPLACE TABLE flow AS (SELECT * FROM read_parquet({}) 
              WHERE observe='{}' AND dvlan = {} AND proto='{}');",
             parquet_list, self.observe, self.vlan, self.proto
         );
-        let mut stmt = db_input.execute_batch(&sql_command).expect("sql summarize");
+        let _ = db_input
+            .execute_batch(&sql_command)
+            .map_err(|e| Error::new(std::io::ErrorKind::Other, format!("DuckDB error: {}", e)))?;
 
         let sql_command = format!(
             "SELECT * EXCLUDE(id,tag,hbos_map,ndpi_risk_list) FROM flow 
-             WHERE {};",
+             WHERE ({});",
             self.filter
         );
 
@@ -593,85 +693,94 @@ impl HistogramModels {
         let mut stmt = db_input.prepare(&sql_command).expect("sql summarize");
 
         println!("\tloading...");
-        let record_iter = stmt.query_map([], |row| {
-            Ok(MemFlowRecord {
-                stream: row.get(0).expect("missing value"),
-                id: "".to_string(), // id is not used in this context
-                observe: row.get(1).expect("missing value"),
-                stime: row.get(2).expect("missing value"),
-                etime: row.get(3).expect("missing value"),
-                dur: row.get(4).expect("missing value"),
-                rtt: row.get(5).expect("missing value"),
-                pcr: row.get(6).expect("missing value"),
-                proto: row.get(7).expect("missing value"),
-                saddr: row.get(8).expect("missing value"),
-                daddr: row.get(9).expect("missing value"),
-                sport: row.get(10).expect("missing value"),
-                dport: row.get(11).expect("missing value"),
-                iflags: row.get(12).expect("missing value"),
-                uflags: row.get(13).expect("missing value"),
-                stcpseq: row.get(14).expect("missing value"),
-                dtcpseq: row.get(15).expect("missing value"),
-                svlan: row.get(16).expect("missing value"),
-                dvlan: row.get(17).expect("missing value"),
-                spkts: row.get(18).expect("missing value"),
-                dpkts: row.get(19).expect("missing value"),
-                sbytes: row.get(20).expect("missing value"),
-                dbytes: row.get(21).expect("missing value"),
-                sentropy: row.get(22).expect("missing value"),
-                dentropy: row.get(23).expect("missing value"),
-                siat: row.get(24).expect("missing value"),
-                diat: row.get(25).expect("missing value"),
-                sstdev: row.get(26).expect("missing value"),
-                dstdev: row.get(27).expect("missing value"),
-                dtcpurg: row.get(28).expect("missing value"),
-                stcpurg: row.get(29).expect("missing value"),
-                ssmallpktcnt: row.get(30).expect("missing value"),
-                dsmallpktcnt: row.get(31).expect("missing value"),
-                slargepktcnt: row.get(32).expect("missing value"),
-                dlargepktcnt: row.get(33).expect("missing value"),
-                snonemptypktcnt: row.get(34).expect("missing value"),
-                dnonemptypktcnt: row.get(35).expect("missing value"),
-                sfirstnonemptycnt: row.get(36).expect("missing value"),
-                dfirstnonemptycnt: row.get(37).expect("missing value"),
-                smaxpktsize: row.get(38).expect("missing value"),
-                dmaxpktsize: row.get(39).expect("missing value"),
-                sstdevpayload: row.get(40).expect("missing value"),
-                dstdevpayload: row.get(41).expect("missing value"),
-                spd: row.get(42).expect("missing value"),
-                reason: row.get(43).expect("missing value"),
-                smac: row.get(44).expect("missing value"),
-                dmac: row.get(45).expect("missing value"),
-                scountry: row.get(46).expect("missing value"),
-                dcountry: row.get(47).expect("missing value"),
-                sasn: row.get(48).expect("missing value"),
-                dasn: row.get(49).expect("missing value"),
-                sasnorg: row.get(50).expect("missing value"),
-                dasnorg: row.get(51).expect("missing value"),
-                orient: row.get(52).expect("missing value"),
-                hbos_score: row.get(53).expect("missing value"),
-                hbos_severity: row.get(54).expect("missing value"),
-                appid: row.get(55).expect("missing value"),
-                category: row.get(56).unwrap_or("".to_string()),
-                risk_bits: row.get(57).expect("missing value"),
-                risk_score: row.get(58).expect("missing value"),
-                risk_severity: row.get(59).expect("missing value"),
-                trigger: row.get(60).expect("missing value"),
+        let record_iter = stmt
+            .query_map([], |row| {
+                Ok(MemFlowRecord {
+                    stream: row.get(0).expect("missing value"),
+                    id: "".to_string(), // id is not used in this context
+                    observe: row.get(1).expect("missing value"),
+                    stime: row.get(2).expect("missing value"),
+                    etime: row.get(3).expect("missing value"),
+                    dur: row.get(4).expect("missing value"),
+                    rtt: row.get(5).expect("missing value"),
+                    pcr: row.get(6).expect("missing value"),
+                    proto: row.get(7).expect("missing value"),
+                    saddr: row.get(8).expect("missing value"),
+                    daddr: row.get(9).expect("missing value"),
+                    sport: row.get(10).expect("missing value"),
+                    dport: row.get(11).expect("missing value"),
+                    iflags: row.get(12).expect("missing value"),
+                    uflags: row.get(13).expect("missing value"),
+                    stcpseq: row.get(14).expect("missing value"),
+                    dtcpseq: row.get(15).expect("missing value"),
+                    svlan: row.get(16).expect("missing value"),
+                    dvlan: row.get(17).expect("missing value"),
+                    spkts: row.get(18).expect("missing value"),
+                    dpkts: row.get(19).expect("missing value"),
+                    sbytes: row.get(20).expect("missing value"),
+                    dbytes: row.get(21).expect("missing value"),
+                    sentropy: row.get(22).expect("missing value"),
+                    dentropy: row.get(23).expect("missing value"),
+                    siat: row.get(24).expect("missing value"),
+                    diat: row.get(25).expect("missing value"),
+                    sstdev: row.get(26).expect("missing value"),
+                    dstdev: row.get(27).expect("missing value"),
+                    dtcpurg: row.get(28).expect("missing value"),
+                    stcpurg: row.get(29).expect("missing value"),
+                    ssmallpktcnt: row.get(30).expect("missing value"),
+                    dsmallpktcnt: row.get(31).expect("missing value"),
+                    slargepktcnt: row.get(32).expect("missing value"),
+                    dlargepktcnt: row.get(33).expect("missing value"),
+                    snonemptypktcnt: row.get(34).expect("missing value"),
+                    dnonemptypktcnt: row.get(35).expect("missing value"),
+                    sfirstnonemptycnt: row.get(36).expect("missing value"),
+                    dfirstnonemptycnt: row.get(37).expect("missing value"),
+                    smaxpktsize: row.get(38).expect("missing value"),
+                    dmaxpktsize: row.get(39).expect("missing value"),
+                    sstdevpayload: row.get(40).expect("missing value"),
+                    dstdevpayload: row.get(41).expect("missing value"),
+                    spd: row.get(42).expect("missing value"),
+                    reason: row.get(43).expect("missing value"),
+                    smac: row.get(44).expect("missing value"),
+                    dmac: row.get(45).expect("missing value"),
+                    scountry: row.get(46).expect("missing value"),
+                    dcountry: row.get(47).expect("missing value"),
+                    sasn: row.get(48).expect("missing value"),
+                    dasn: row.get(49).expect("missing value"),
+                    sasnorg: row.get(50).expect("missing value"),
+                    dasnorg: row.get(51).expect("missing value"),
+                    orient: row.get(52).expect("missing value"),
+                    hbos_score: row.get(53).expect("missing value"),
+                    hbos_severity: row.get(54).expect("missing value"),
+                    appid: row.get(55).expect("missing value"),
+                    category: row.get(56).unwrap_or("".to_string()),
+                    risk_bits: row.get(57).expect("missing value"),
+                    risk_score: row.get(58).expect("missing value"),
+                    risk_severity: row.get(59).expect("missing value"),
+                    trigger: row.get(60).expect("missing value"),
+                })
             })
-        })?;
+            .map_err(|e| Error::new(std::io::ErrorKind::Other, format!("DuckDB error: {}", e)))?;
 
         println!("\tscoring...");
         let current_utc: DateTime<Utc> = Utc::now();
         let rfc3339_name: String = current_utc.to_rfc3339();
         let score_input_file = format!("score.{}.tmp", rfc3339_name.replace(":", "-"));
-        let mut score_conn = duckdb_open(&score_input_file, 1);
+        let mut score_conn = duckdb_open(&score_input_file, 1)
+            .map_err(|e| Error::new(std::io::ErrorKind::Other, format!("DuckDB error: {}", e)))?;
         {
-            score_conn.execute_batch(HBOS_SCORE)?;
+            score_conn.execute_batch(HBOS_SCORE).map_err(|e| {
+                Error::new(std::io::ErrorKind::Other, format!("DuckDB error: {}", e))
+            })?;
 
-            let mut appender: Appender = score_conn.appender("hbos_score")?;
+            let mut appender: Appender = score_conn.appender("hbos_score").map_err(|e| {
+                Error::new(std::io::ErrorKind::Other, format!("DuckDB error: {}", e))
+            })?;
 
             for record in record_iter {
-                let flow_record = record?;
+                let flow_record = record.map_err(|e| {
+                    Error::new(std::io::ErrorKind::Other, format!("DuckDB error: {}", e))
+                })?;
 
                 let mut hbos_score: f64 = 0.0;
                 for (_name, histogram) in &mut self.numerical {
@@ -698,7 +807,9 @@ impl HistogramModels {
                     let feature_prob = histogram.get_probability(&flow_record);
                     hbos_score += (1.0 / feature_prob).log10();
                 }
-                appender.append_row(params![hbos_score])?;
+                appender.append_row(params![hbos_score]).map_err(|e| {
+                    Error::new(std::io::ErrorKind::Other, format!("DuckDB error: {}", e))
+                })?;
             }
             let _ = appender.flush();
             drop(appender);
@@ -709,30 +820,34 @@ impl HistogramModels {
         //
         println!("\tsummarizing...");
         let (low, medium, high, severe) = self.get_histogram_severity_levels(&mut score_conn);
-        let mut stmt = score_conn.prepare(
-            "SELECT min(score),max(score),skewness(score),avg(score),stddev_pop(score),
+        let mut stmt = score_conn
+            .prepare(
+                "SELECT min(score),max(score),skewness(score),avg(score),stddev_pop(score),
                      mad(score),median(score),quantile_cont(score, 0.99999) FROM hbos_score;",
-        )?;
-        let hbos_summary = stmt.query_row([], |row| {
-            Ok(HbosSummaryRecord {
-                observe: self.observe.clone(),
-                vlan: self.vlan,
-                proto: self.proto.clone(),
-                min: row.get(0).expect("missing min"),
-                max: row.get(1).expect("missing max"),
-                skewness: row.get(2).expect("missing skew"),
-                avg: row.get(3).expect("missing avg"),
-                std: row.get(4).expect("missing std"),
-                mad: row.get(5).expect("missing mad"),
-                median: row.get(6).expect("missing median"),
-                quantile: row.get::<_, f64>(7).expect("missing quantile").round(),
-                low: low,
-                medium: medium,
-                high: high,
-                severe: severe,
-                filter: self.filter.to_string(),
+            )
+            .map_err(|e| Error::new(std::io::ErrorKind::Other, format!("DuckDB error: {}", e)))?;
+        let hbos_summary = stmt
+            .query_row([], |row| {
+                Ok(HbosSummaryRecord {
+                    observe: self.observe.clone(),
+                    vlan: self.vlan,
+                    proto: self.proto.clone(),
+                    min: row.get(0).expect("missing min"),
+                    max: row.get(1).expect("missing max"),
+                    skewness: row.get(2).expect("missing skew"),
+                    avg: row.get(3).expect("missing avg"),
+                    std: row.get(4).expect("missing std"),
+                    mad: row.get(5).expect("missing mad"),
+                    median: row.get(6).expect("missing median"),
+                    quantile: row.get::<_, f64>(7).expect("missing quantile").round(),
+                    low: low,
+                    medium: medium,
+                    high: high,
+                    severe: severe,
+                    filter: self.filter.to_string(),
+                })
             })
-        })?;
+            .map_err(|e| Error::new(std::io::ErrorKind::Other, format!("DuckDB error: {}", e)))?;
 
         let _ = db_input.close();
         if Path::new(&db_input_file).exists() {
@@ -755,27 +870,33 @@ impl HistogramModels {
             hbos_summary.severe
         );
 
-        let _ = sink_conn.execute_batch(HBOS_SUMMARY)?;
+        let _ = sink_conn
+            .execute_batch(HBOS_SUMMARY)
+            .map_err(|e| Error::new(std::io::ErrorKind::Other, format!("DuckDB error: {}", e)))?;
 
-        let mut appender: Appender = sink_conn.appender("hbos_summary")?;
-        appender.append_row(params![
-            hbos_summary.observe,
-            hbos_summary.vlan,
-            hbos_summary.proto,
-            hbos_summary.min,
-            hbos_summary.max,
-            hbos_summary.skewness,
-            hbos_summary.avg,
-            hbos_summary.std,
-            hbos_summary.mad,
-            hbos_summary.median,
-            hbos_summary.quantile,
-            hbos_summary.low,
-            hbos_summary.medium,
-            hbos_summary.high,
-            hbos_summary.severe,
-            hbos_summary.filter
-        ])?;
+        let mut appender: Appender = sink_conn
+            .appender("hbos_summary")
+            .map_err(|e| Error::new(std::io::ErrorKind::Other, format!("DuckDB error: {}", e)))?;
+        appender
+            .append_row(params![
+                hbos_summary.observe,
+                hbos_summary.vlan,
+                hbos_summary.proto,
+                hbos_summary.min,
+                hbos_summary.max,
+                hbos_summary.skewness,
+                hbos_summary.avg,
+                hbos_summary.std,
+                hbos_summary.mad,
+                hbos_summary.median,
+                hbos_summary.quantile,
+                hbos_summary.low,
+                hbos_summary.medium,
+                hbos_summary.high,
+                hbos_summary.severe,
+                hbos_summary.filter
+            ])
+            .map_err(|e| Error::new(std::io::ErrorKind::Other, format!("DuckDB error: {}", e)))?;
         let _ = appender.flush();
         drop(appender);
 
@@ -795,7 +916,9 @@ impl HistogramModels {
         let rfc3339_name: String = current_utc.to_rfc3339();
         let db_input_file = format!("build.{}.tmp", rfc3339_name.replace(":", "-"));
 
-        let mut conn = duckdb_open(&db_input_file, 1);
+        let mut conn = duckdb_open(&db_input_file, 1)?;
+        //    .map_err(|e| Error::new(std::io::ErrorKind::Other, format!("DuckDB error: {}", e)))?;
+
         let sql_command = format!(
             "CREATE OR REPLACE TABLE flow AS (SELECT * FROM read_parquet({}) 
              WHERE observe='{}' AND dvlan = {} AND proto='{}');",

@@ -45,7 +45,7 @@ impl ExportProcessor {
         let interval = parse_interval(interval_string);
         let mut options = parse_options(options_string);
         options.entry("format").or_insert("json");
-        options.entry("fields").or_insert("");
+        options.entry("fields").or_insert("*");
         options.entry("filter").or_insert("");
         for (key, value) in &options {
             if !value.is_empty() {
@@ -54,12 +54,15 @@ impl ExportProcessor {
         }
 
         let format = options.get("format").expect("expected format");
-        let filter = options.get("filter").expect("expected filter");
+        let mut filter = String::from(*options.get("filter").expect("expected filter"));
+        if !filter.is_empty() && !filter.starts_with("WHERE ") {
+            filter.insert_str(0, "WHERE ");
+        }
 
         let field_list = options.get("fields").expect("expected format");
 
         let mut list: Vec<String> = Vec::new();
-        if !field_list.is_empty() {
+        if !field_list.is_empty() && *field_list != "*" {
             list = field_list.split(",").map(str::to_string).collect();
             for field in &list {
                 if !FIELDS.contains(&field.as_str()) {
@@ -67,6 +70,7 @@ impl ExportProcessor {
                 }
             }
         }
+        // println!("field list: {:?}", field_list);
         // Validate the output directory
         if !output.is_empty() {
             let output_path = std::path::Path::new(output);
@@ -146,7 +150,8 @@ impl FileProcessor for ExportProcessor {
             }
         }
 
-        let conn = duckdb_open_memory(2);
+        let conn = duckdb_open_memory(1)
+            .map_err(|e| Error::new(std::io::ErrorKind::Other, format!("DuckDB error: {}", e)))?;
         let current_utc: DateTime<Utc> = Utc::now();
         let rfc3339_name: String = current_utc.to_rfc3339();
         let output_file = format!(
@@ -164,25 +169,35 @@ impl FileProcessor for ExportProcessor {
         match self.format.as_str() {
             "csv" => {
                 sql_command = format!(
-                    "COPY (SELECT * FROM read_parquet({}) {}) TO '{}.csv' (HEADER, DELIMITER ',');",
-                    parquet_list, where_filter, output_file
+                    "COPY (SELECT {} FROM read_parquet({}) {}) TO '{}.csv' (HEADER, DELIMITER ',');",
+                    self.field_list, parquet_list, where_filter, output_file
                 );
             }
             "json" => {
                 sql_command = format!(
-                    "COPY (SELECT * FROM read_parquet({}) {}) TO '{}.json';",
-                    parquet_list, where_filter, output_file
+                    "COPY (SELECT {} FROM read_parquet({}) {}) TO '{}.json';",
+                    self.field_list, parquet_list, where_filter, output_file
+                );
+            }
+            "parquet" => {
+                // load in memory, change id, then export
+                sql_command = format!(
+                    "CREATE TABLE flow AS SELECT * FROM read_parquet({});
+                     UPDATE flow UPDATE SET stream = {};
+                     COPY (SELECT {} FROM flow {}) TO '{}.parquet' (FORMAT parquet, COMPRESSION zstd, ROW_GROUP_SIZE 100_000);",
+                     parquet_list,  StreamType::EXPORTED as u32, self.field_list, where_filter, output_file
                 );
             }
             _ => {
                 sql_command = format!(
-                    "COPY (SELECT * FROM read_parquet({}) {}) TO '{}.json';",
-                    parquet_list, where_filter, output_file
+                    "COPY (SELECT {} FROM read_parquet({}) {}) TO '{}.json';",
+                    self.field_list, parquet_list, where_filter, output_file
                 );
             }
         }
 
-        conn.execute_batch(&sql_command).expect("execute_batch");
+        conn.execute_batch(&sql_command)
+            .map_err(|e| Error::new(std::io::ErrorKind::Other, format!("DuckDB error: {}", e)))?;
         conn.close().expect("db close");
         println!("exported: {} => {}", parquet_list, output_file);
 

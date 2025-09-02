@@ -169,7 +169,8 @@ impl FileProcessor for SplitProcessor {
             }
         }
 
-        let conn = duckdb_open_memory(2);
+        let conn = duckdb_open_memory(1)
+            .map_err(|e| Error::new(std::io::ErrorKind::Other, format!("DuckDB error: {}", e)))?;
 
         let current_utc: DateTime<Utc> = Utc::now();
         let rfc3339_name: String = current_utc.to_rfc3339();

@@ -139,6 +139,14 @@ pub struct DistinctObserveRecord {
 }
 
 #[derive(Clone, Debug)]
+pub struct TriggerCountRecord {
+    pub low: i64,
+    pub med: i64,
+    pub high: i64,
+    pub severe: i64,
+}
+
+#[derive(Clone, Debug)]
 pub struct DistinctObservation {
     pub observe: String,
     pub vlan: i64,

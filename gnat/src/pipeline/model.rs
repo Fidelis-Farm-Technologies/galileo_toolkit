@@ -65,7 +65,7 @@ impl ModelProcessor {
             .or_insert("daddr,dport,dentropy,sentropy,diat,siat,spd,pcr,orient,stime");
         options
             .entry("filter")
-            .or_insert("proto='udp' OR (proto='tcp' AND iflags ^@ 'Ss')");
+            .or_insert("proto='udp' OR (proto='tcp' AND iflags ^@ 'Ss')"); // established tcp and udp connections
         options.entry("md").or_insert("");
 
         for (key, value) in &options {
@@ -111,12 +111,13 @@ impl ModelProcessor {
                 self.command, self.md_database
             );
 
-            let md_conn = duckdb_open("md:", 1);
+            let md_conn = duckdb_open("md:", 1).map_err(|e| {
+                Error::new(std::io::ErrorKind::Other, format!("DuckDB error: {}", e))
+            })?;
             // upload the model to motherduck
             let sql_command = format!(
-                "CREATE OR REPLACE DATABASE tmp; USE tmp;
-                 CREATE OR REPLACE DATABASE {} FROM '{}';",
-                self.md_database, model_file
+                "COPY FROM DATABASE {} (OVERWRITE) TO md:{};",
+                model_file, self.md_database
             );
 
             md_conn.execute_batch(&sql_command).map_err(|e| {
@@ -223,7 +224,8 @@ impl FileProcessor for ModelProcessor {
             self.model_list[0],
             rfc3339_name.replace(":", "-")
         );
-        let mut db_input = duckdb_open(&tmp_input, 1);
+        let mut db_input = duckdb_open(&tmp_input, 1)
+            .map_err(|e| Error::new(std::io::ErrorKind::Other, format!("DuckDB error: {}", e)))?;
 
         // check the number of days in the dataset
         // if there are not enough days, skip the model build
@@ -257,7 +259,7 @@ impl FileProcessor for ModelProcessor {
         // load observation list
         println!("{}: determining observation points...", self.command);
         let sql_distinct = format!(
-            "SELECT DISTINCT observe, dvlan, proto FROM read_parquet({}) WHERE {} GROUP BY ALL ORDER BY ALL;",parquet_list, self.filter
+            "SELECT DISTINCT observe, dvlan, proto FROM read_parquet({}) WHERE ({}) GROUP BY ALL ORDER BY ALL;",parquet_list, self.filter
         );
         let mut stmt = db_input
             .prepare(&sql_distinct)
@@ -275,10 +277,22 @@ impl FileProcessor for ModelProcessor {
         let mut distinct_observation_models: Vec<DistinctObservation> = Vec::new();
         for record in record_iter {
             distinct_observation_models.push(record.map_err(|e| {
-                Error::new(std::io::ErrorKind::Other, format!("DuckDB error: {}", e))
+                Error::new(std::io::ErrorKind::Other, format!("DuckDB error: {:?}", e))
             })?);
         }
-        let _ = db_input.close().expect("failed to close input database");
+
+        let _ = db_input
+            .close()
+            .map_err(|e| Error::new(std::io::ErrorKind::Other, format!("DuckDB error: {:?}", e)))?;
+
+        if Path::new(&tmp_input).exists() {
+            fs::remove_file(&tmp_input).map_err(|e| {
+                Error::new(
+                    std::io::ErrorKind::Other,
+                    format!("failed to remove file: {}", e),
+                )
+            })?;
+        }
 
         // build histograms
         let mut distinct_models = HashMap::new();
@@ -312,7 +326,6 @@ impl FileProcessor for ModelProcessor {
                 })?;
             distinct_models.insert(distinct_key, model);
         }
-
         println!("{}: done", self.command);
 
         let current_utc: DateTime<Utc> = Utc::now();
@@ -322,7 +335,8 @@ impl FileProcessor for ModelProcessor {
             self.model_list[0],
             rfc3339_name.replace(":", "-")
         );
-        let mut db_output = duckdb_open(&tmp_output, 1);
+        let mut db_output = duckdb_open(&tmp_output, 1)
+            .map_err(|e| Error::new(std::io::ErrorKind::Other, format!("DuckDB error: {}", e)))?;
 
         // serialize to duckdb
         for (distinct_key, model) in distinct_models.iter() {
@@ -348,17 +362,10 @@ impl FileProcessor for ModelProcessor {
                     Error::new(std::io::ErrorKind::Other, format!("summarize error: {}", e))
                 })?;
         }
-        let _ = db_output.close();
+        let _ = db_output.close().map_err(|e| {
+            Error::new(std::io::ErrorKind::Other, format!("DuckDB error: {:?}", e))
+        })?;
         println!("{}: done", self.command);
-
-        if Path::new(&tmp_input).exists() {
-            fs::remove_file(&tmp_input).map_err(|e| {
-                Error::new(
-                    std::io::ErrorKind::Other,
-                    format!("failed to remove file: {}", e),
-                )
-            })?;
-        }
 
         if Path::new(&self.model_list[0]).exists() {
             // backup the old model file
@@ -382,7 +389,7 @@ impl FileProcessor for ModelProcessor {
             })?;
 
             // upload the model to motherduck if configured
-            self.upload_model(&self.model_list[0])?;
+            //self.upload_model(&self.model_list[0])?;
         }
 
         Ok(())

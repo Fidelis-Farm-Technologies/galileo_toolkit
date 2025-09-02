@@ -72,7 +72,8 @@ impl CacheProcessor {
         let mut output_list = Vec::<String>::new();
         output_list.push(output.to_string());
 
-        let db_conn = duckdb_open(&output_list[0], 2);
+        let db_conn = duckdb_open(&output_list[0], 1)
+            .map_err(|e| Error::new(std::io::ErrorKind::Other, format!("DuckDB error: {}", e)))?;
         let _ = db_conn
             .execute_batch(MD_FLOW_TABLE)
             .map_err(|e| Error::new(std::io::ErrorKind::Other, format!("DuckDB error: {}", e)))?;

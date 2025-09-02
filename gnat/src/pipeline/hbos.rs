@@ -111,11 +111,17 @@ impl HbosProcessor {
         }
 
         println!("{}: loading hbos summary information", self.command);
-        let model_conn = duckdb_open_readonly(&self.model_spec, 2);
+        let model_conn = duckdb_open_readonly(&self.model_spec, 1)
+            .map_err(|e| Error::new(std::io::ErrorKind::Other, format!("DuckDB error: {}", e)))?;
 
         let mut stmt = model_conn
             .prepare(MODEL_DISTINCT_OBSERVATIONS)
-            .expect("sql prepare");
+            .map_err(|e| {
+                Error::new(
+                    std::io::ErrorKind::Other,
+                    format!("DuckDB prepare error: {}", e),
+                )
+            })?;
 
         let record_iter = stmt
             .query_map([], |row| {
@@ -158,8 +164,8 @@ impl HbosProcessor {
                         low: row.get(11).expect("missing value"),
                         medium: row.get(12).expect("missing value"),
                         high: row.get(13).expect("missing value"),
-                        severe: row.get(14).expect("missing value"),                      
-                        filter: row.get(15).expect("missing value"),                      
+                        severe: row.get(14).expect("missing value"),
+                        filter: row.get(15).expect("missing value"),
                     })
                 })
                 .expect("query row");
@@ -183,7 +189,8 @@ impl HbosProcessor {
             return Err(Error::other(error_msg));
         }
         println!("{}: loading hbos model information", self.command);
-        let mut model_conn = duckdb_open_readonly(&self.model_spec, 2);
+        let mut model_conn = duckdb_open_readonly(&self.model_spec, 1)
+            .map_err(|e| Error::new(std::io::ErrorKind::Other, format!("DuckDB error: {}", e)))?;
         let mut stmt = model_conn
             .prepare(MODEL_DISTINCT_OBSERVATIONS)
             .expect("sql prepare");
@@ -231,6 +238,10 @@ impl HbosProcessor {
             };
 
             let _ = model.deserialize(&mut model_conn);
+            println!(
+                "{}: low={}, medium={}, high={}, severe={}",
+                self.command, model.low, model.medium, model.high, model.severe
+            );
             let _ = distinct_models.insert(distinct_key, model);
         }
         let _ = model_conn.close();
@@ -330,9 +341,12 @@ impl FileProcessor for HbosProcessor {
             self.output_list[0], self.command, safe_rfc3339
         );
 
-        let mut db_out = duckdb_open_memory(2);
+        let mut db_out = duckdb_open_memory(1)
+            .map_err(|e| Error::new(std::io::ErrorKind::Other, format!("DuckDB error: {}", e)))?;
         {
-            let mut db_in = duckdb_open_memory(2);
+            let mut db_in = duckdb_open_memory(1).map_err(|e| {
+                Error::new(std::io::ErrorKind::Other, format!("DuckDB error: {}", e))
+            })?;
             let sql_command = format!(
                 "CREATE TABLE flow AS SELECT * FROM read_parquet({});",
                 parquet_list
@@ -393,8 +407,11 @@ impl FileProcessor for HbosProcessor {
         let sql_transform_command = format!(
             "CREATE OR REPLACE TABLE flow AS SELECT * FROM read_parquet({});
              UPDATE flow 
-               SET hbos_score = score_table.hbos_score, hbos_severity = score_table.hbos_severity 
-               FROM score_table WHERE flow.id = score_table.id;
+                SET hbos_score = score_table.hbos_score, hbos_severity = score_table.hbos_severity
+                FROM score_table WHERE flow.id = score_table.id;
+             UPDATE flow 
+                SET hbos_map = hbos_map_table.hbos_map, ndpi_risk_list = hbos_map_table.risk_list 
+                FROM hbos_map_table WHERE flow.id = hbos_map_table.id;
              COPY (SELECT * FROM flow) TO '{}' (FORMAT parquet, COMPRESSION zstd, ROW_GROUP_SIZE 100_000);",
             parquet_list, tmp_filename
         );

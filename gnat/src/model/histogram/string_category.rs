@@ -95,7 +95,7 @@ impl StringCategoryHistogram {
         proto: &str,
     ) -> Result<(), duckdb::Error> {
         let sql_command = format!(
-            "SELECT {} FROM flow WHERE {};",
+            "SELECT {} FROM flow WHERE ({});",
             self.name, self.filter
         );
         let mut stmt = db.prepare(&sql_command)?;
@@ -105,8 +105,12 @@ impl StringCategoryHistogram {
                 value: row.get(0).expect("missing value"),
             })
         })?;
-
-        if self.name == "appid" {
+        
+        // If the name is ndpi_appid, we skip the "unknown" category
+        // because it is not a valid category.
+        // This is a special case for ndpi_appid, which is used to
+        // filter out the "unknown" category from the histogram.
+        if self.name == "ndpi_appid" {
             for record in record_iter {
                 let record = record?;
                 if record.value != "unknown" {

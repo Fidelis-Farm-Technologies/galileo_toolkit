@@ -100,7 +100,7 @@ impl NumberHistogram {
     ) -> Result<(), duckdb::Error> {
         let sql_create_command = format!(
             "CREATE OR REPLACE TABLE number AS SELECT {} 
-            FROM flow WHERE {};",
+            FROM flow WHERE ({});",
             self.name, self.filter
         );
         db.execute_batch(&sql_create_command)?;

@@ -22,7 +22,7 @@ pub const DEFAULT_ENTROPY_MODULUS: i64 = 256;
 pub const DEFAULT_PCR_MODULUS: i64 = 256;
 pub const DEFAULT_ASN_MODULUS: i64 = 8192;
 pub const NO_MODULUS: i64 = 0;
-pub const MINIMUM_DAYS: u32 = 2;
+pub const MINIMUM_DAYS: u32 = 1;
 
 pub static MODEL_DISTINCT_FEATURE: &str =
     "SELECT DISTINCT name FROM histogram_summary GROUP BY ALL ORDER BY ALL;";

@@ -35,7 +35,8 @@ RUN ldconfig
 # ---------------------------------------------------------------
 # Stage 2
 # ---------------------------------------------------------------
-FROM bitnami/minideb:bookworm AS runner
+#FROM bitnami/minideb:bookworm AS runner
+FROM bitnami/minideb:latest AS runner
 
 RUN --mount=type=cache,target=/var/cache/apt \
 	apt-get update \

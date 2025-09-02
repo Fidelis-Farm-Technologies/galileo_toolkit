@@ -37,7 +37,7 @@ use crate::pipeline::Interval;
 #[derive(Clone, Serialize, Deserialize)]
 pub struct RuleJsonStructure {
     action: String,
-    #[serde(default = "default_string")]    
+    #[serde(default = "default_string")]
     observe: String,
     #[serde(default = "default_string")]
     proto: String,
@@ -50,7 +50,7 @@ pub struct RuleJsonStructure {
     #[serde(default = "default_u16")]
     dport: u16,
     #[serde(default = "default_string")]
-    appid: String,    
+    appid: String,
     #[serde(default = "default_string")]
     orient: String,
     #[serde(default = "default_string")]
@@ -152,7 +152,8 @@ impl RuleProcessor {
         }
         self.rules = RuleProcessor::load_rule_file(&self.rule_spec)?;
 
-        let mut model_conn = duckdb_open_readonly(&self.model_spec, 2);
+        let mut model_conn = duckdb_open_readonly(&self.model_spec, 1)
+            .map_err(|e| Error::new(std::io::ErrorKind::Other, format!("DuckDB error: {}", e)))?;
         let mut stmt = model_conn
             .prepare(MODEL_DISTINCT_OBSERVATIONS)
             .map_err(|e| {
@@ -210,6 +211,10 @@ impl RuleProcessor {
             };
 
             let _ = model.deserialize(&mut model_conn);
+            println!(
+                "{}: low={}, medium={}, high={}, severe={}",
+                self.command, model.low, model.medium, model.high, model.severe
+            );
             let _ = distinct_models.insert(distinct_key, model);
         }
 
@@ -383,7 +388,7 @@ impl RuleProcessor {
             }
 
             if terms > 0 {
-                println!("\tRULE: {} ", rule_line);
+                //println!("\tRULE: {} ", rule_line);
                 rules.push(rule_line);
             }
         }
@@ -397,6 +402,130 @@ impl RuleProcessor {
             match self.load_configuration() {
                 Ok(_) => println!("{}: loaded configuration", self.command),
                 Err(e) => return Err(e),
+            }
+        }
+        Ok(())
+    }
+    fn print_trigger_count(&self, db_in: &mut duckdb::Connection) -> Result<(), Error> {
+        // TODO: roll into a single query
+        // count the number of triggers
+        let sql_trigger_count = format!(
+            "SELECT count() 
+             FROM flow
+             WHERE trigger > 0;",
+        );
+        let mut stmt = db_in.prepare(&sql_trigger_count).map_err(|e| {
+            Error::new(
+                std::io::ErrorKind::Other,
+                format!("DuckDB prepare error: {}", e),
+            )
+        })?;
+        let trigger_count = stmt
+            .query_row([], |row| Ok(row.get::<_, u64>(0)?))
+            .map_err(|e| {
+                Error::new(
+                    std::io::ErrorKind::Other,
+                    format!("DuckDB prepare error: {}", e),
+                )
+            })?;
+        if trigger_count == 0 {
+            return Ok(());
+        }
+        //
+        // severe triggers
+        //
+        {
+            let sql_trigger_count = format!(
+                "SELECT count() 
+             FROM flow
+             WHERE trigger > 0 AND hbos_severity >= 4;",
+            );
+            let mut stmt = db_in.prepare(&sql_trigger_count).map_err(|e| {
+                Error::new(
+                    std::io::ErrorKind::Other,
+                    format!("DuckDB prepare error: {}", e),
+                )
+            })?;
+            let trigger_count = stmt
+                .query_row([], |row| Ok(row.get::<_, u64>(0)?))
+                .map_err(|e| {
+                    Error::new(std::io::ErrorKind::Other, format!("DuckDB error: {}", e))
+                })?;
+
+            if trigger_count > 0 {
+                println!("{}: {} severe triggers", self.command, trigger_count);
+            }
+        }
+        //
+        // high triggers
+        //
+        {
+            let sql_trigger_count = format!(
+                "SELECT count() 
+             FROM flow
+             WHERE trigger > 0 AND hbos_severity < 4 AND hbos_severity >= 3;",
+            );
+            let mut stmt = db_in.prepare(&sql_trigger_count).map_err(|e| {
+                Error::new(
+                    std::io::ErrorKind::Other,
+                    format!("DuckDB prepare error: {}", e),
+                )
+            })?;
+            let trigger_count = stmt
+                .query_row([], |row| Ok(row.get::<_, u64>(0)?))
+                .map_err(|e| {
+                    Error::new(std::io::ErrorKind::Other, format!("DuckDB error: {}", e))
+                })?;
+            if trigger_count > 0 {
+                println!("{}: {} high triggers", self.command, trigger_count);
+            }
+        }
+        //
+        // medium triggers
+        //
+        {
+            let sql_trigger_count = format!(
+                "SELECT count() 
+             FROM flow
+             WHERE trigger > 0 AND hbos_severity < 3 AND hbos_severity >= 2;",
+            );
+            let mut stmt = db_in.prepare(&sql_trigger_count).map_err(|e| {
+                Error::new(
+                    std::io::ErrorKind::Other,
+                    format!("DuckDB prepare error: {}", e),
+                )
+            })?;
+            let trigger_count = stmt
+                .query_row([], |row| Ok(row.get::<_, u64>(0)?))
+                .map_err(|e| {
+                    Error::new(std::io::ErrorKind::Other, format!("DuckDB error: {}", e))
+                })?;
+            if trigger_count > 0 {
+                println!("{}: {} medium triggers", self.command, trigger_count);
+            }
+        }
+        //
+        // low triggers
+        //
+        {
+            let sql_trigger_count = format!(
+                "SELECT count() 
+             FROM flow
+             WHERE trigger > 0 AND hbos_severity < 2 AND hbos_severity >= 1;",
+            );
+            let mut stmt = db_in.prepare(&sql_trigger_count).map_err(|e| {
+                Error::new(
+                    std::io::ErrorKind::Other,
+                    format!("DuckDB prepare error: {}", e),
+                )
+            })?;
+            let trigger_count = stmt
+                .query_row([], |row| Ok(row.get::<_, u64>(0)?))
+                .map_err(|e| {
+                    Error::new(std::io::ErrorKind::Other, format!("DuckDB error: {}", e))
+                })?;
+            if trigger_count > 0 {
+                println!("{}: {} low triggers", self.command, trigger_count);
             }
         }
         Ok(())
@@ -480,8 +609,8 @@ impl FileProcessor for RuleProcessor {
             rfc3339_name.replace(":", "-")
         );
 
-        let mut db_out = duckdb_open_memory(2);
-        let mut db_in = duckdb_open_memory(2);
+        let mut db_in = duckdb_open_memory(2)
+            .map_err(|e| Error::new(std::io::ErrorKind::Other, format!("DuckDB error: {}", e)))?;
         let sql_command = format!(
             "CREATE TABLE flow AS SELECT * FROM read_parquet({});",
             parquet_list
@@ -490,7 +619,9 @@ impl FileProcessor for RuleProcessor {
             .execute_batch(&sql_command)
             .map_err(|e| Error::new(std::io::ErrorKind::Other, format!("DuckDB error: {}", e)))?;
 
+        //
         // apply rules to the flow table
+        //
         println!("{}: applying {} rules...", self.command, self.rules.len());
         for rule in self.rules.iter() {
             let sql_command = format!("UPDATE flow {};", rule);
@@ -499,99 +630,15 @@ impl FileProcessor for RuleProcessor {
             })?;
         }
 
-        // count the number of triggers
-        let sql_trigger_count = format!(
-            "SELECT count() 
-             FROM flow
-             WHERE trigger > 0;",
+        self.print_trigger_count(&mut db_in)?;
+
+        let sql_command = format!(
+            "COPY flow TO '{}' (FORMAT 'parquet', CODEC 'snappy', ROW_GROUP_SIZE 100_000);",
+            tmp_parquet_filename
         );
-        let mut stmt = db_in.prepare(&sql_trigger_count).map_err(|e| {
-            Error::new(
-                std::io::ErrorKind::Other,
-                format!("DuckDB prepare error: {}", e),
-            )
-        })?;
-        let trigger_count = stmt
-            .query_row([], |row| Ok(row.get::<_, u64>(0)?))
+        db_in
+            .execute_batch(&sql_command)
             .map_err(|e| Error::new(std::io::ErrorKind::Other, format!("DuckDB error: {}", e)))?;
-        println!("{}: {} triggers generated", self.command, trigger_count);
-
-        if trigger_count > 0 {
-            // load distinct observation models
-            println!("{}: determining observation points...", self.command);
-            let mut stmt = db_in.prepare(PARQUET_DISTINCT_OBSERVATIONS).map_err(|e| {
-                Error::new(std::io::ErrorKind::Other, format!("DuckDB error: {}", e))
-            })?;
-            let record_iter = stmt
-                .query_map([], |row| {
-                    Ok(DistinctObservation {
-                        observe: row.get(0).expect("missing value"),
-                        vlan: row.get(1).expect("missing dvlan"),
-                        proto: row.get(2).expect("missing proto"),
-                    })
-                })
-                .map_err(|e| {
-                    Error::new(std::io::ErrorKind::Other, format!("DuckDB error: {}", e))
-                })?;
-            let mut distinct_observation_models: Vec<DistinctObservation> = Vec::new();
-            for record in record_iter {
-                distinct_observation_models.push(record.map_err(|e| {
-                    Error::new(std::io::ErrorKind::Other, format!("DuckDB error: {}", e))
-                })?);
-            }
-
-            println!("{}: processing...", self.command);
-            {
-                db_out.execute_batch("CREATE TABLE trigger_table (id UUID,trigger TINYINT,risk_list VARCHAR[],hbos_map map(VARCHAR,DOUBLE));")
-                .map_err(|e| Error::new(std::io::ErrorKind::Other, format!("DuckDB error: {}", e)))?;
-                for record in &distinct_observation_models {
-                    let distinct_key =
-                        format!("{}/{}/{}", record.observe, record.vlan, record.proto);
-                    let histogram_model =
-                        self.histogram_map.get_mut(&distinct_key).ok_or_else(|| {
-                            Error::new(
-                                std::io::ErrorKind::Other,
-                                format!("missing histogram model: {}", distinct_key),
-                            )
-                        })?;
-                    let triggers = histogram_model
-                        .generate_trigger_data(&mut db_in, &mut db_out)
-                        .map_err(|e| {
-                            Error::new(
-                                std::io::ErrorKind::Other,
-                                format!("generate_trigger_data error: {}", e),
-                            )
-                        })?;
-                    if triggers > 0 {
-                        println!("{}: [{}] {} triggers", self.command, distinct_key, triggers);
-                    }
-                }
-            }
-            let _ = db_in.close();
-
-            println!("{}: transforming data...", self.command);
-            let sql_transform_command = format!(
-                "CREATE TABLE flow AS SELECT * FROM read_parquet({});
-                 UPDATE flow
-                   SET trigger = trigger_table.trigger,ndpi_risk_list = trigger_table.risk_list,hbos_map = trigger_table.hbos_map
-                   FROM trigger_table
-                   WHERE flow.id = trigger_table.id;
-                 COPY (SELECT * FROM flow) TO '{}' (FORMAT parquet, COMPRESSION zstd, ROW_GROUP_SIZE 100_000);",
-                parquet_list, tmp_parquet_filename
-            );
-            db_out.execute_batch(&sql_transform_command).map_err(|e| {
-                Error::new(std::io::ErrorKind::Other, format!("DuckDB error: {}", e))
-            })?;
-        } else {
-            let sql_command = format!(
-                "COPY (SELECT * FROM read_parquet({})) TO '{}' (FORMAT 'parquet', CODEC 'snappy', ROW_GROUP_SIZE 100_000);",
-                parquet_list, tmp_parquet_filename
-            );
-            db_out.execute_batch(&sql_command).map_err(|e| {
-                Error::new(std::io::ErrorKind::Other, format!("DuckDB error: {}", e))
-            })?;
-        }
-        let _ = db_out.close();
 
         fs::rename(&tmp_parquet_filename, &parquet_filename).map_err(|e| {
             Error::new(

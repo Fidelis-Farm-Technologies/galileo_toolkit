@@ -34,9 +34,11 @@ pub mod pipeline {
     use std::fs;
     use std::io::Error;
     use std::path::Path;
+    use std::process;
     use std::thread;
     use std::time::Duration;
     use std::time::Instant;
+
     const MAX_BATCH: usize = 128;
 
     pub mod aggregate;
@@ -128,6 +130,7 @@ pub mod pipeline {
         LEGACY = 3,
         FLOW = 100,
         TELEMETRY = 300,
+        EXPORTED = 800,
         ADHOC = 900,
     }
 
@@ -231,7 +234,8 @@ pub mod pipeline {
             return Ok(());
         }
 
-        let db_conn = duckdb_open_memory(1);
+        let db_conn = duckdb_open_memory(1)
+            .map_err(|e| Error::new(std::io::ErrorKind::Other, format!("DuckDB error: {}", e)))?;
         let sql_exists_command = format!(
             "SELECT EXISTS(SELECT 1 FROM parquet_schema('{}') WHERE name = 'stream')",
             file_list[0]
@@ -285,7 +289,8 @@ pub mod pipeline {
     }
 
     fn check_parquet_stream(parquet_files: &str) -> Result<bool, Error> {
-        let db_conn = duckdb_open_memory(1);
+        let db_conn = duckdb_open_memory(1)
+            .map_err(|e| Error::new(std::io::ErrorKind::Other, format!("DuckDB error: {}", e)))?;
 
         let sql_distinct_stream = format!(
             "SELECT count(DISTINCT stream) FROM read_parquet({});",
@@ -314,7 +319,15 @@ pub mod pipeline {
         }
         return Ok(false);
     }
-
+    pub fn use_s3(output: &str) -> Result<bool, VarError> {
+        if output.starts_with("s3:") {
+            let motherduck_token = env::var("motherduck_token");
+            if motherduck_token.is_ok() {
+                return Ok(true);
+            }
+        }
+        return Ok(false);
+    }
     pub trait FileProcessor {
         fn process(&mut self, file_list: &Vec<String>) -> Result<(), Error>;
         fn socket(&mut self) -> Result<(), Error>;
@@ -345,7 +358,9 @@ pub mod pipeline {
             // Sanitize rfc3339_name for filesystem safety
             let safe_rfc3339 = rfc3339_name.replace(":", "-");
             let mut record_count: i64 = 0;
-            let db_out = duckdb_open_memory(2);
+            let db_out = duckdb_open_memory(1).map_err(|e| {
+                Error::new(std::io::ErrorKind::Other, format!("DuckDB error: {}", e))
+            })?;
             for output in output_list {
                 let sql = format!(
                     "CREATE OR REPLACE TABLE flow AS SELECT * FROM read_parquet({});",
@@ -387,12 +402,12 @@ pub mod pipeline {
             let command = self.get_command().clone();
             let mut file_list: Vec<String> = Vec::new();
             let mut pass_list: Vec<String> = Vec::new();
-            println!("process_directory");
+
             let mut total_files_processed = 0;
             loop {
                 file_list.clear();
                 pass_list.clear();
-                for entry in fs::read_dir(input).expect("read_dir()") {
+                for entry in fs::read_dir(input)? {
                     let file: fs::DirEntry = entry.unwrap();
                     let file_name = String::from(file.file_name().to_string_lossy());
                     if !file_name.starts_with(".") && file_name.ends_with(&file_extension) {
@@ -422,7 +437,7 @@ pub mod pipeline {
                 }
 
                 if !file_list.is_empty() {
-                    check_and_update_schema(&file_list).expect("failed to update legacy schema");
+                    //check_and_update_schema(&file_list).expect("failed to update legacy schema");
 
                     //
                     // process files
@@ -441,10 +456,10 @@ pub mod pipeline {
                     for (index, file) in file_list.iter_mut().enumerate() {
                         if pass_list.is_empty() {
                             if self.delete_files() {
-                                fs::remove_file(file).expect("failed to remove file");
+                                fs::remove_file(file)?;
                             }
                         } else {
-                            fs::rename(&file, &pass_list[index]).expect("failed to rename file");
+                            fs::rename(&file, &pass_list[index])?;
                         }
                     }
                 }
@@ -462,13 +477,25 @@ pub mod pipeline {
             let mut output_list = Vec::new();
             let _ = self.get_input(&mut input_list)?;
             let _ = self.get_output(&mut output_list)?;
-
             let pass = self.get_pass().clone();
             let interval = self.get_interval().clone();
             let file_extension = self.get_file_extension().clone();
 
+            // Change the current working directory
+            // This is necessary for the DuckDB to work correctly with the temp directory
+            // and to ensure that the output files are written to the correct location
+            // This is a workaround for the DuckDB issue with temp directory
+            //
+            let _ = env::set_current_dir(&input_list[0])?;
+            println!(
+                "{}: pwd spec: {:?}",
+                command,
+                env::current_dir().unwrap().display()
+            );
+
             println!("{}: input spec: {:?}", command, input_list);
             println!("{}: output spec: {:?}", command, output_list);
+
             if !pass.is_empty() {
                 println!("{}: pass spec: [{}]", command, pass);
             }
@@ -479,6 +506,7 @@ pub mod pipeline {
                 Interval::DAY => "day",
                 _ => "second",
             };
+
             println!("{}: interval: [{}]", command, interval_string);
             //
             // verify the combination of arguments are valid
@@ -522,9 +550,8 @@ pub mod pipeline {
                 let mut total_files_processed = 0;
                 // process all input directories
                 for input in &input_list {
-                    total_files_processed += self
-                        .process_directory(&input, &pass, &file_extension)
-                        .expect("failed to process directory");
+                    total_files_processed +=
+                        self.process_directory(&input, &pass, &file_extension)?;
                 }
 
                 if total_files_processed > 0 {

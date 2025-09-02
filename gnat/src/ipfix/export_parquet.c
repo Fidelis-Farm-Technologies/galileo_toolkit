@@ -130,6 +130,7 @@ PrintTCPFlags(
     {
         g_string_append_c(str, '.');
     }
+    
     if (rflags & YF_TF_URG)
     {
         g_string_append_c(str, 'u');
@@ -294,8 +295,8 @@ static int AppendIpfixRecord(duckdb_appender appender,
     duckdb_append_timestamp(appender, start);
     duckdb_timestamp end = {(flow->flowEndMilliseconds * 1000)};
     duckdb_append_timestamp(appender, end);
-    duckdb_append_uint32(appender, (flow->flowEndMilliseconds - flow->flowStartMilliseconds)); // duration
-    duckdb_append_uint32(appender, flow->reverseFlowDeltaMilliseconds);
+    duckdb_append_uint32(appender, (flow->flowEndMilliseconds - flow->flowStartMilliseconds)); // duration in milliseconds
+    duckdb_append_uint32(appender, flow->reverseFlowDeltaMilliseconds); // rtt in milliseconds
 
     uint32_t pcr = 0;
     if ((flow->dataByteCount + flow->reverseDataByteCount) != 0)

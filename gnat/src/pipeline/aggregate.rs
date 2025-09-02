@@ -130,13 +130,17 @@ impl AggregationProcessor {
 
         let mut db_conn: Connection = Connection::open_in_memory().expect("memory");
         if use_motherduck {
-            db_conn = duckdb_open(output, 2);
+            db_conn = duckdb_open(output, 1).map_err(|e| {
+                Error::new(std::io::ErrorKind::Other, format!("DuckDB error: {}", e))
+            })?;
             let _ = db_conn.execute_batch(CREATE_METRICS_TABLE).map_err(|e| {
                 Error::new(std::io::ErrorKind::Other, format!("DuckDB error: {}", e))
             })?;
             println!("{}: connection established with {}", command, output);
         } else {
-            db_conn = duckdb_open(&cache_file, 2);
+            db_conn = duckdb_open(&cache_file, 1).map_err(|e| {
+                Error::new(std::io::ErrorKind::Other, format!("DuckDB error: {}", e))
+            })?;
             let _ = db_conn
                 .execute_batch(CREATE_METRICS_TABLE)
                 .expect("execute_batch");
@@ -234,7 +238,8 @@ impl FileProcessor for AggregationProcessor {
             }
         }
 
-        let mem_source = duckdb_open_memory(2);
+        let mem_source = duckdb_open_memory(1)
+            .map_err(|e| Error::new(std::io::ErrorKind::Other, format!("DuckDB error: {}", e)))?;
         let sql_command = format!(
             "CREATE TABLE flow AS SELECT * FROM read_parquet({});",
             parquet_list
@@ -260,18 +265,25 @@ impl FileProcessor for AggregationProcessor {
                 table.insert(&mem_source, &mut cache_appender);
             }
             let _ = cache_appender.flush();
-            let tmp_parquet = format!("{}/.gnat_metrics.parquet", self.output_list[0]);
+
+            let current_utc: DateTime<Utc> = Utc::now();
+            let rfc3339_name: String = current_utc.to_rfc3339();
+            // Sanitize rfc3339_name for filesystem safety
+            let safe_rfc3339 = rfc3339_name.replace(":", "-");
+
+            let tmp_parquet = format!("gnat_metrics-{}.parquet", safe_rfc3339);
             let sql_copy = format!(
                 "COPY metrics TO '{}' (FORMAT parquet, COMPRESSION zstd);",
                 tmp_parquet
             );
+            
             mem_source.execute_batch(&sql_copy).map_err(|e| {
                 Error::new(std::io::ErrorKind::Other, format!("DuckDB error: {}", e))
             })?;
 
             println!("{}: uploading to motherduck...", self.command);
             let sql_export = format!(
-                "CREATE TABLE IF NOT EXISTS metrics AS SELECT * FROM read_parquet('{}')",
+                "INSERT INTO metrics SELECT * FROM read_parquet('{}')",
                 tmp_parquet
             );
 
@@ -378,7 +390,9 @@ impl FileProcessor for AggregationProcessor {
                 if dtg_format != self.dtg_format {
                     self.dtg_format = dtg_format;
 
-                    self.db_conn = duckdb_open(&cache_file, 2);
+                    self.db_conn = duckdb_open(&cache_file, 1).map_err(|e| {
+                        Error::new(std::io::ErrorKind::Other, format!("DuckDB error: {}", e))
+                    })?;
                     self.db_conn
                         .execute_batch(CREATE_METRICS_TABLE)
                         .map_err(|e| {

@@ -127,3 +127,23 @@ typedef struct _YAF_FLOW_RECORD_
     fbSubTemplateMultiList_t subTemplateMultiList;
 
 } YAF_FLOW_RECORD;
+
+typedef struct _YAF_STATS_RECORD_
+{
+    uint32_t   observationDomainId;
+    uint32_t   exportingProcessId;
+    uint32_t   exporterIPv4Address;
+    uint32_t   observationTimeSeconds;
+    uint64_t   systemInitTimeMilliseconds;
+    uint64_t   exportedFlowTotalCount;
+    uint64_t   packetTotalCount;
+    uint64_t   droppedPacketTotalCount;
+    uint64_t   ignoredPacketTotalCount;
+    uint64_t   notSentPacketTotalCount;
+    uint32_t   yafExpiredFragmentCount;
+    uint32_t   yafAssembledFragmentCount;
+    uint32_t   flowTableFlushEvents;
+    uint32_t   yafFlowTablePeakCount;
+    uint32_t   yafMeanFlowRate;
+    uint32_t   yafMeanPacketRate;
+} YAF_STATS_RECORD;

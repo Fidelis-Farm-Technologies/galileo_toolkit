@@ -128,7 +128,8 @@ impl SampleProcessor {
             .join(",");
         let parquet_list = format!("[{}]", parquet_list);
 
-        let conn = duckdb_open_memory(4);
+        let conn = duckdb_open_memory(2)
+            .map_err(|e| Error::new(std::io::ErrorKind::Other, format!("DuckDB error: {}", e)))?;
         let sql_command = format!(
             "COPY (SELECT * FROM read_parquet({})
                    WHERE date_trunc('day',stime) > date_add(current_date, - INTERVAL {} DAY))
@@ -189,7 +190,8 @@ impl SampleProcessor {
                 return Ok(0);
             }
         }
-        let conn = duckdb_open_memory(2);
+        let conn = duckdb_open_memory(2)
+            .map_err(|e| Error::new(std::io::ErrorKind::Other, format!("DuckDB error: {}", e)))?;
 
         let sql_command = format!(
             "CREATE TABLE flow AS SELECT * FROM read_parquet({});",
@@ -234,8 +236,7 @@ impl SampleProcessor {
             let sql_command = format!(
                 "SELECT count(*) FROM flow
                  WHERE observe='{}' 
-                   AND dvlan = {} AND proto='{}'                   
-                   AND TRIGGER = 0
+                   AND dvlan = {} AND proto='{}' AND hbos_severity < 4 
                    AND date_trunc('day',stime) > date_add(current_date, - INTERVAL {} DAY);",
                 record.observe, record.vlan, record.proto, self.retention
             );
@@ -267,8 +268,7 @@ impl SampleProcessor {
             let sql_command = format!(
                 "COPY (SELECT * FROM flow
                  WHERE observe='{}' 
-                   AND dvlan = {} AND proto='{}'                   
-                   AND TRIGGER = 0
+                   AND dvlan = {} AND proto='{}' AND hbos_severity < 4 
                    AND date_trunc('day',stime) > date_add(current_date, - INTERVAL {} DAY)
                  USING SAMPLE {}%)
                  TO '{}' (FORMAT 'parquet', CODEC 'snappy', ROW_GROUP_SIZE 100_000);",

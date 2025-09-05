@@ -13,6 +13,7 @@ use crate::model::table::TimeCategoryRecord;
 use crate::model::table::{HistogramSummaryTable, TimeHistogramTable};
 use chrono::prelude::*;
 use chrono::{TimeZone, Utc};
+use std::fmt::format;
 use std::io::Error;
 
 use duckdb::{params, Appender, Connection, DropBehavior};
@@ -22,16 +23,14 @@ use std::collections::HashMap;
 pub struct TimeCategoryHistogram {
     name: String,
     count: u64,
-    filter: String,
     map: HashMap<u32, u64>,
 }
 
 impl TimeCategoryHistogram {
-    pub fn new(name: &str, filter: &str) -> TimeCategoryHistogram {
+    pub fn new(name: &str) -> TimeCategoryHistogram {
         TimeCategoryHistogram {
             name: name.to_string(),
             count: 0,
-            filter: filter.to_string(),
             map: HashMap::new(),
         }
     }
@@ -52,8 +51,7 @@ impl TimeCategoryHistogram {
                 "time_category",
                 self.count,
                 0,
-                0,
-                self.filter
+                0
             ])
             .map_err(|e| Error::new(std::io::ErrorKind::Other, format!("DuckDB error: {}", e)))?;
 
@@ -114,10 +112,15 @@ impl TimeCategoryHistogram {
         vlan: i64,
         proto: &str,
     ) -> Result<(), duckdb::Error> {
-        let sql_command = format!(
-            "SELECT {} FROM flow WHERE ({});",
-            self.name, self.filter
+        let mut sql_command = format!(
+            "SELECT {} FROM flow WHERE observe='{}' AND dvlan={} AND proto='{}'",
+            self.name, observe, vlan, proto,
         );
+        if proto == "tcp" {
+            sql_command.push_str(" AND (iflags ^@ 'Ss');");
+        } else {
+            sql_command.push_str(";");
+        }
         let mut stmt = db.prepare(&sql_command)?;
 
         let record_iter = stmt.query_map([], |row| {
@@ -177,7 +180,6 @@ impl TimeCategoryHistogram {
                     count: row.get(5).expect("missing max"),
                     hash_size: row.get(6).expect("missing hash_size"),
                     bin_count: row.get(7).expect("missing bin_count"),
-                    filter: row.get(8).expect("missing filter"),
                 })
             })
             .unwrap();
@@ -188,7 +190,6 @@ impl TimeCategoryHistogram {
         let mut histogram_category = TimeCategoryHistogram {
             name: summary.name,
             count: summary.count as u64,
-            filter: summary.filter,
             map,
         };
         //

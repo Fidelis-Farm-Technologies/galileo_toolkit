@@ -43,7 +43,7 @@ pub struct ModelProcessor {
     pub interval: Interval,
     pub extension: String,
     pub feature_list: Vec<String>,
-    pub filter: String,
+    pub protocol_list: Vec<String>,
     pub md_database: String,
 }
 
@@ -63,9 +63,7 @@ impl ModelProcessor {
         options
             .entry("features")
             .or_insert("daddr,dport,dentropy,sentropy,diat,siat,spd,pcr,orient,stime");
-        options
-            .entry("filter")
-            .or_insert("proto='udp' OR (proto='tcp' AND iflags ^@ 'Ss')"); // established tcp and udp connections
+        options.entry("proto").or_insert("udp,tcp");
         options.entry("md").or_insert("");
 
         for (key, value) in &options {
@@ -73,7 +71,7 @@ impl ModelProcessor {
                 println!("{}: [{}=>{}]", command, key, value);
             }
         }
-        let mut filter = options.get("filter").expect("expected filter").to_string();
+
         let mut md_database = options.get("md").expect("expected model").to_string();
         if !md_database.is_empty() {
             let md_parameter = format!("md:{}", md_database);
@@ -83,8 +81,14 @@ impl ModelProcessor {
                 md_database.clear();
             }
         }
-        let features = options.get("features").expect("expected feature");
+        let features = options.get("features").expect("expected feature list");
         let feature_list: Vec<String> = features.split(",").map(str::to_string).collect();
+
+        let mut protocols = options
+            .get("proto")
+            .expect("expected proto list")
+            .to_string();
+        let protocol_list: Vec<String> = protocols.split(",").map(str::to_string).collect();
 
         let mut input_list = Vec::<String>::new();
         input_list.push(input.to_string());
@@ -98,7 +102,7 @@ impl ModelProcessor {
             interval: interval,
             extension: extension_string.to_string(),
             feature_list: feature_list,
-            filter: filter.to_string(),
+            protocol_list: protocol_list,
             md_database: md_database.to_string(),
         })
     }
@@ -259,7 +263,7 @@ impl FileProcessor for ModelProcessor {
         // load observation list
         println!("{}: determining observation points...", self.command);
         let sql_distinct = format!(
-            "SELECT DISTINCT observe, dvlan, proto FROM read_parquet({}) WHERE ({}) GROUP BY ALL ORDER BY ALL;",parquet_list, self.filter
+            "SELECT DISTINCT observe, dvlan, proto FROM read_parquet({}) GROUP BY ALL ORDER BY ALL;",parquet_list
         );
         let mut stmt = db_input
             .prepare(&sql_distinct)
@@ -297,6 +301,14 @@ impl FileProcessor for ModelProcessor {
         // build histograms
         let mut distinct_models = HashMap::new();
         for record in &distinct_observation_models {
+            // protocol_list filtering
+            if !self.protocol_list.is_empty() && !self.protocol_list.contains(&record.proto) {
+                // println!(
+                //     "{}: skipping protocol {} not in {:?}",
+                //     self.command, record.proto, self.protocol_list
+                // );
+                continue;
+            }
             let distinct_key = format!("{}/{}/{}", record.observe, record.vlan, record.proto);
             println!("{}: building histogram [{}]", self.command, distinct_key);
             let numerical_map: HashMap<String, NumberHistogram> = HashMap::new();
@@ -317,10 +329,9 @@ impl FileProcessor for ModelProcessor {
                 medium: 0.0,
                 high: 0.0,
                 severe: 0.0,
-                filter: "".to_string(),
             };
             let _ = model
-                .build(&parquet_list, &self.feature_list, &self.filter)
+                .build(&parquet_list, &self.feature_list)
                 .map_err(|e| {
                     Error::new(std::io::ErrorKind::Other, format!("build error: {}", e))
                 })?;
@@ -362,9 +373,9 @@ impl FileProcessor for ModelProcessor {
                     Error::new(std::io::ErrorKind::Other, format!("summarize error: {}", e))
                 })?;
         }
-        let _ = db_output.close().map_err(|e| {
-            Error::new(std::io::ErrorKind::Other, format!("DuckDB error: {:?}", e))
-        })?;
+        let _ = db_output
+            .close()
+            .map_err(|e| Error::new(std::io::ErrorKind::Other, format!("DuckDB error: {:?}", e)))?;
         println!("{}: done", self.command);
 
         if Path::new(&self.model_list[0]).exists() {

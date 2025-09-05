@@ -63,7 +63,6 @@ pub struct HbosSummaryRecord {
     pub medium: f64,
     pub high: f64,
     pub severe: f64,
-    pub filter: String,
 }
 
 #[derive(Debug)]
@@ -168,7 +167,6 @@ pub struct HistogramSummaryTable {
     pub count: usize,
     pub hash_size: u64,
     pub bin_count: usize,
-    pub filter: String,
 }
 
 #[derive(Debug)]

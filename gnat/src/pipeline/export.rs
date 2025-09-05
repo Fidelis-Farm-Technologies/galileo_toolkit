@@ -54,9 +54,18 @@ impl ExportProcessor {
         }
 
         let format = options.get("format").expect("expected format");
-        let mut filter = String::from(*options.get("filter").expect("expected filter"));
-        if !filter.is_empty() && !filter.starts_with("WHERE ") {
-            filter.insert_str(0, "WHERE ");
+        let mut filter_type = options.get("filter").expect("expected filter type").to_string();        
+        if !filter_type.is_empty() {
+            if filter_type == "trigger" {
+                filter_type = String::from("(trigger > 0)");
+                println!("{}: storing triggered records", command);
+            } else if filter_type == "severe" {
+                filter_type = String::from("(hbos_severity > 0)");
+                println!("{}: storing severe records", command);
+            }
+            else {
+                return Err(Error::other("unsupported filter type"));
+            }
         }
 
         let field_list = options.get("fields").expect("expected format");
@@ -92,7 +101,7 @@ impl ExportProcessor {
             interval: interval,
             extension: extension_string.to_string(),
             format: format.to_string(),
-            filter: filter.to_string(),
+            filter: filter_type.to_string(),
         })
     }
 }
@@ -179,15 +188,7 @@ impl FileProcessor for ExportProcessor {
                     self.field_list, parquet_list, where_filter, output_file
                 );
             }
-            "parquet" => {
-                // load in memory, change id, then export
-                sql_command = format!(
-                    "CREATE TABLE flow AS SELECT * FROM read_parquet({});
-                     UPDATE flow UPDATE SET stream = {};
-                     COPY (SELECT {} FROM flow {}) TO '{}.parquet' (FORMAT parquet, COMPRESSION zstd, ROW_GROUP_SIZE 100_000);",
-                     parquet_list,  StreamType::EXPORTED as u32, self.field_list, where_filter, output_file
-                );
-            }
+
             _ => {
                 sql_command = format!(
                     "COPY (SELECT {} FROM read_parquet({}) {}) TO '{}.json';",

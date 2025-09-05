@@ -39,8 +39,7 @@ pub static HISTOGRAM_SUMMARY: &str = "CREATE TABLE IF NOT EXISTS histogram_summa
     histogram VARCHAR,               
     count UBIGINT,
     hash_size INTEGER,
-    bin_count UBIGINT,
-    filter VARCHAR
+    bin_count UBIGINT
 );";
 
 static HISTOGRAM_NUMERICAL: &str = "CREATE TABLE IF NOT EXISTS histogram_numerical
@@ -105,12 +104,11 @@ pub static HBOS_SUMMARY: &str = "CREATE TABLE IF NOT EXISTS hbos_summary
     low FLOAT,
     medium FLOAT,
     high FLOAT,
-    severe FLOAT,
-    filter VARCHAR
+    severe FLOAT
 );";
 
 
-static HBOS_SCORE: &str = "CREATE OR REPLACE TABLE hbos_score
+static HBOS_SCORE: &str = "CREATE TABLE hbos_score
 (
     score FLOAT
 )";

@@ -165,7 +165,6 @@ impl HbosProcessor {
                         medium: row.get(12).expect("missing value"),
                         high: row.get(13).expect("missing value"),
                         severe: row.get(14).expect("missing value"),
-                        filter: row.get(15).expect("missing value"),
                     })
                 })
                 .expect("query row");
@@ -234,7 +233,6 @@ impl HbosProcessor {
                 medium: 0.0,
                 high: 0.0,
                 severe: 0.0,
-                filter: "".to_string(),
             };
 
             let _ = model.deserialize(&mut model_conn);
@@ -341,85 +339,93 @@ impl FileProcessor for HbosProcessor {
             self.output_list[0], self.command, safe_rfc3339
         );
 
-        let mut db_out = duckdb_open_memory(1)
+        let mut db_conn = duckdb_open_memory(1)
             .map_err(|e| Error::new(std::io::ErrorKind::Other, format!("DuckDB error: {}", e)))?;
-        {
-            let mut db_in = duckdb_open_memory(1).map_err(|e| {
-                Error::new(std::io::ErrorKind::Other, format!("DuckDB error: {}", e))
-            })?;
-            let sql_command = format!(
-                "CREATE TABLE flow AS SELECT * FROM read_parquet({});",
-                parquet_list
-            );
-            db_in.execute_batch(&sql_command).map_err(|e| {
-                Error::new(std::io::ErrorKind::Other, format!("DuckDB error: {}", e))
-            })?;
 
-            println!("{}: determining observation points...", self.command);
-            let mut stmt = db_in.prepare(PARQUET_DISTINCT_OBSERVATIONS).map_err(|e| {
-                Error::new(std::io::ErrorKind::Other, format!("DuckDB error: {}", e))
-            })?;
+        db_conn
+            .execute_batch("CREATE TABLE score_table (id UUID, hbos_score DOUBLE, hbos_severity UTINYINT);").        
+        map_err(|e| Error::new(std::io::ErrorKind::Other, format!("DuckDB error: {}", e)))?;
+        db_conn
+            .execute_batch("CREATE TABLE hbos_map_table (id UUID,risk_list VARCHAR[],hbos_map map(VARCHAR,DOUBLE));")
+                .map_err(|e| Error::new(std::io::ErrorKind::Other, format!("DuckDB error: {}", e)))?;
+        let sql_command = format!(
+            "CREATE TABLE flow AS SELECT * FROM read_parquet({});",
+            parquet_list
+        );
+        db_conn
+            .execute_batch(&sql_command)
+            .map_err(|e| Error::new(std::io::ErrorKind::Other, format!("DuckDB error: {}", e)))?;
 
-            let record_iter = stmt
-                .query_map([], |row| {
-                    Ok(DistinctObservation {
-                        observe: row.get(0).expect("missing value"),
-                        vlan: row.get(1).expect("missing dvlan"),
-                        proto: row.get(2).expect("missing proto"),
-                    })
+        println!("{}: determining observation points...", self.command);
+        let mut stmt = db_conn
+            .prepare(PARQUET_DISTINCT_OBSERVATIONS)
+            .map_err(|e| Error::new(std::io::ErrorKind::Other, format!("DuckDB error: {}", e)))?;
+
+        let record_iter = stmt
+            .query_map([], |row| {
+                Ok(DistinctObservation {
+                    observe: row.get(0).expect("missing value"),
+                    vlan: row.get(1).expect("missing dvlan"),
+                    proto: row.get(2).expect("missing proto"),
                 })
-                .map_err(|e| {
-                    Error::new(std::io::ErrorKind::Other, format!("DuckDB error: {}", e))
-                })?;
+            })
+            .map_err(|e| Error::new(std::io::ErrorKind::Other, format!("DuckDB error: {}", e)))?;
 
-            let mut distinct_observation_models: Vec<DistinctObservation> = Vec::new();
-            for record in record_iter {
-                distinct_observation_models.push(record.map_err(|e| {
-                    Error::new(std::io::ErrorKind::Other, format!("DuckDB error: {}", e))
-                })?);
-            }
-
-            println!("{}: scoring...", self.command);
-            for record in &distinct_observation_models {
-                let distinct_key = format!("{}/{}/{}", record.observe, record.vlan, record.proto);
-                println!("{}:\t{}", self.command, distinct_key);
-                let histogram_model = match self.histogram_map.get_mut(&distinct_key) {
-                    None => {
-                        eprintln!("Warning: missing histogram model {}", distinct_key);
-                        continue;
-                    }
-                    Some(model) => model,
-                };
-
-                let _ = histogram_model
-                    .score(&mut db_in, &mut db_out)
-                    .map_err(|e| {
-                        Error::new(
-                            std::io::ErrorKind::Other,
-                            format!("hbos scoring error: {}", e),
-                        )
-                    })?;
-            }
-            let _ = db_in.close();
+        let mut distinct_observation_models: Vec<DistinctObservation> = Vec::new();
+        for record in record_iter {
+            distinct_observation_models.push(record.map_err(|e| {
+                Error::new(std::io::ErrorKind::Other, format!("DuckDB error: {}", e))
+            })?);
         }
 
-        println!("{}: transforming data...", self.command);
+        println!("{}: scoring...", self.command);
+        for record in &distinct_observation_models {
+            let distinct_key = format!("{}/{}/{}", record.observe, record.vlan, record.proto);
+            println!("{}:\t{}", self.command, distinct_key);
+            let histogram_model = match self.histogram_map.get_mut(&distinct_key) {
+                None => {
+                    eprintln!("Warning: missing histogram model {}", distinct_key);
+                    continue;
+                }
+                Some(model) => model,
+            };
+
+            let _ = histogram_model.score(&mut db_conn).map_err(|e| {
+                Error::new(
+                    std::io::ErrorKind::Other,
+                    format!("hbos scoring error: {}", e),
+                )
+            })?;
+        }
+
+        //
+        // Update the flow table with the hbos scores and severity
+        //
+        println!("{}: updating records...", self.command);
         let sql_transform_command = format!(
-            "CREATE OR REPLACE TABLE flow AS SELECT * FROM read_parquet({});
-             UPDATE flow 
+            "UPDATE flow 
                 SET hbos_score = score_table.hbos_score, hbos_severity = score_table.hbos_severity
                 FROM score_table WHERE flow.id = score_table.id;
-             UPDATE flow 
+            UPDATE flow 
                 SET hbos_map = hbos_map_table.hbos_map, ndpi_risk_list = hbos_map_table.risk_list 
-                FROM hbos_map_table WHERE flow.id = hbos_map_table.id;
-             COPY (SELECT * FROM flow) TO '{}' (FORMAT parquet, COMPRESSION zstd, ROW_GROUP_SIZE 100_000);",
-            parquet_list, tmp_filename
+                FROM hbos_map_table WHERE flow.id = hbos_map_table.id;"
         );
 
-        db_out
+        db_conn
             .execute_batch(&sql_transform_command)
             .map_err(|e| Error::new(std::io::ErrorKind::Other, format!("DuckDB error: {}", e)))?;
-        let _ = db_out.close();
+
+        //
+        // Export the flow table to parquet
+        //
+        let sql_export_command = format!(
+            "COPY (SELECT * FROM flow) TO '{}' (FORMAT parquet, COMPRESSION zstd, ROW_GROUP_SIZE 100_000);",
+            tmp_filename
+            );
+        db_conn
+            .execute_batch(&sql_export_command)
+            .map_err(|e| Error::new(std::io::ErrorKind::Other, format!("DuckDB error: {}", e)))?;
+        let _ = db_conn.close();
 
         if Path::new(&tmp_filename).exists() {
             fs::rename(&tmp_filename, &final_filename)?;

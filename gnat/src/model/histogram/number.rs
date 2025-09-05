@@ -13,6 +13,7 @@ use crate::model::table::HistogramIntegerValue;
 use crate::model::table::MemFlowRecord;
 use crate::model::table::{HistogramSummaryTable, NumericHistogramTable};
 use duckdb::{params, Appender, Connection, DropBehavior};
+use std::fmt::format;
 use std::io::Error;
 
 #[derive(Debug)]
@@ -21,18 +22,16 @@ pub struct NumberHistogram {
     bin_boundary: Vec<i64>,
     bin_frequency: Vec<usize>,
     bin_count: usize,
-    filter: String,
     count: usize,
 }
 
 impl NumberHistogram {
-    pub fn new(name: &str, bin_count: usize, filter: &str) -> NumberHistogram {
+    pub fn new(name: &str, bin_count: usize) -> NumberHistogram {
         NumberHistogram {
             name: name.to_string(),
             bin_boundary: Vec::new(),
             bin_frequency: Vec::new(),
             bin_count: bin_count,
-            filter: filter.to_string(),
             count: 0,
         }
     }
@@ -53,8 +52,7 @@ impl NumberHistogram {
                 "numerical",
                 self.count,
                 0,
-                self.bin_count,
-                self.filter,
+                self.bin_count
             ])
             .map_err(|e| Error::new(std::io::ErrorKind::Other, format!("DuckDB error: {}", e)))?;
 
@@ -98,12 +96,19 @@ impl NumberHistogram {
         vlan: i64,
         proto: &str,
     ) -> Result<(), duckdb::Error> {
-        let sql_create_command = format!(
-            "CREATE OR REPLACE TABLE number AS SELECT {} 
-            FROM flow WHERE ({});",
-            self.name, self.filter
+        let mut sql_command = format!(
+            "CREATE TABLE number AS SELECT {} FROM flow WHERE observe='{}' AND dvlan={} AND proto='{}'",
+            self.name,
+            observe,
+            vlan,
+            proto,
         );
-        db.execute_batch(&sql_create_command)?;
+        if proto == "tcp" {
+            sql_command.push_str(" AND (iflags ^@ 'Ss');");
+        } else {
+            sql_command.push_str(";");
+        }
+        db.execute_batch(&sql_command)?;
 
         let sql_command = format!("FROM histogram_values(number,{});", self.name);
         let mut stmt = db.prepare(&sql_command)?;
@@ -173,7 +178,6 @@ impl NumberHistogram {
                     count: row.get(5).expect("missing max"),
                     hash_size: row.get(6).expect("missing hash_size"),
                     bin_count: row.get(7).expect("missing bin_count"),
-                    filter: row.get(8).expect("missing filter"),
                 })
             })
             .unwrap();
@@ -186,7 +190,6 @@ impl NumberHistogram {
             bin_boundary: vec![0; summary.bin_count as usize],
             bin_frequency: vec![0; summary.bin_count as usize],
             bin_count: summary.bin_count,
-            filter: summary.filter,
             count: summary.count,
         };
 

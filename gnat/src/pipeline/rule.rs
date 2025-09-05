@@ -207,7 +207,6 @@ impl RuleProcessor {
                 medium: 0.0,
                 high: 0.0,
                 severe: 0.0,
-                filter: "".to_string(),
             };
 
             let _ = model.deserialize(&mut model_conn);
@@ -409,12 +408,7 @@ impl RuleProcessor {
     fn print_trigger_count(&self, db_in: &mut duckdb::Connection) -> Result<(), Error> {
         // TODO: roll into a single query
         // count the number of triggers
-        let sql_trigger_count = format!(
-            "SELECT count() 
-             FROM flow
-             WHERE trigger > 0;",
-        );
-        let mut stmt = db_in.prepare(&sql_trigger_count).map_err(|e| {
+        let mut stmt = db_in.prepare("SELECT count() FROM flow WHERE trigger > 0;").map_err(|e| {
             Error::new(
                 std::io::ErrorKind::Other,
                 format!("DuckDB prepare error: {}", e),

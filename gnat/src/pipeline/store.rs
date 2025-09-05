@@ -17,7 +17,8 @@ use crate::utils::duckdb::{duckdb_open, duckdb_open_memory};
 use duckdb::Connection;
 use std::env;
 
-use std::time::SystemTime;
+use chrono::DateTime;
+use chrono::Utc;
 
 use crate::pipeline::parse_interval;
 use crate::pipeline::parse_options;
@@ -233,6 +234,12 @@ impl StoreProcessor {
             }
         }
 
+        // Get current time for file naming
+        let current_utc: DateTime<Utc> = Utc::now();
+        let mut push_time: String = current_utc.to_string();
+        //let mut push_time: String = current_utc.to_rfc3339().replace(":", "-");
+        //push_time = push_time.replace("+", "_");
+
         let sql_cmd = format!(
             "SELECT DISTINCT
              year(stime) AS year, 
@@ -241,7 +248,8 @@ impl StoreProcessor {
              FROM read_parquet({});",
             parquet_list
         );
-
+        
+        // SELECT EXTRACT(EPOCH FROM timestamp_column) FROM my_table;
         let mut stmt = self.db_conn.prepare(&sql_cmd).expect("db prepare()");
         let dtg_iter = stmt
             .query_map([], |row| {
@@ -253,15 +261,10 @@ impl StoreProcessor {
             })
             .expect("query_map()");
 
-        let push_time = SystemTime::now()
-            .duration_since(SystemTime::UNIX_EPOCH)
-            .expect("now()");
-
         for dtg_entry in dtg_iter {
             let dtg = dtg_entry.unwrap();
 
             if self.filter.is_empty() {
-
                 let sql_record = format!(
                     "CREATE OR REPLACE TABLE flow AS SELECT * FROM read_parquet({});", parquet_list);
                 self.db_conn.execute_batch(&sql_record).map_err(|e| {
@@ -304,7 +307,7 @@ impl StoreProcessor {
                     dtg.year, dtg.month, dtg.day,
                     self.output_list[0],
                     dtg.year, dtg.month, dtg.day,
-                    dtg.year, dtg.month, dtg.day, push_time.as_secs());
+                    dtg.year, dtg.month, dtg.day, push_time);
 
                 self.db_conn.execute_batch(&sql_s3_copy).map_err(|e| {
                     Error::new(std::io::ErrorKind::Other, format!("DuckDB error: {}", e))
@@ -353,11 +356,11 @@ impl StoreProcessor {
                 let sql_s3_copy = format!(
                     "COPY (SELECT *, year(stime) AS year, month(stime) AS month, day(stime) as day FROM flow 
                         WHERE year = {} AND month = {} AND day = {}) 
-                        TO '{}/year={}/month={}/day={}/{}{:02}{:02}-{}.parquet' (FORMAT 'parquet', CODEC 'zstd', ROW_GROUP_SIZE 100_000);",  
+                        TO '{}/year={}/month={}/day={}/{}{:02}{:02}-{}.parquet' (FORMAT 'parquet', CODEC 'zstd', ROW_GROUP_SIZE 100_000);",
                     dtg.year, dtg.month, dtg.day, 
                     self.output_list[0],
                     dtg.year, dtg.month, dtg.day, 
-                    dtg.year, dtg.month, dtg.day, push_time.as_secs());
+                    dtg.year, dtg.month, dtg.day, push_time);
             
                 self.db_conn.execute_batch(&sql_s3_copy).map_err(|e| {
                     Error::new(std::io::ErrorKind::Other, format!("DuckDB error: {}", e))

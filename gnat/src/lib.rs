@@ -39,7 +39,7 @@ pub mod pipeline {
     use std::time::Duration;
     use std::time::Instant;
 
-    const MAX_BATCH: usize = 128;
+    const MAX_BATCH: usize = 1024;
 
     pub mod aggregate;
     pub mod cache;

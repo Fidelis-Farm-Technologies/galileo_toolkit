@@ -286,7 +286,7 @@ impl RuleProcessor {
             if !rule.observe.is_empty() {
                 rule_line.push_str("observe ^@ '");
                 rule_line.push_str(&rule.observe);
-                rule_line.push_str("'");
+                rule_line.push_str("' ");
                 terms += 1;
             }
 
@@ -297,7 +297,7 @@ impl RuleProcessor {
                 terms += 1;
                 rule_line.push_str("proto = '");
                 rule_line.push_str(&rule.proto);
-                rule_line.push_str("'");
+                rule_line.push_str("' ");
             }
 
             if !rule.saddr.is_empty() {
@@ -307,7 +307,7 @@ impl RuleProcessor {
                 terms += 1;
                 rule_line.push_str("saddr ^@ '");
                 rule_line.push_str(&rule.saddr);
-                rule_line.push_str("'");
+                rule_line.push_str("' ");
             }
 
             if rule.sport != 0 {
@@ -317,6 +317,7 @@ impl RuleProcessor {
                 terms += 1;
                 rule_line.push_str("sport = ");
                 rule_line.push_str(&rule.sport.to_string());
+                rule_line.push_str(" ");
             }
 
             if !rule.daddr.is_empty() {
@@ -326,7 +327,7 @@ impl RuleProcessor {
                 terms += 1;
                 rule_line.push_str("daddr ^@ '");
                 rule_line.push_str(&rule.daddr);
-                rule_line.push_str("'");
+                rule_line.push_str("' ");
             }
 
             if rule.dport != 0 {
@@ -336,6 +337,7 @@ impl RuleProcessor {
                 terms += 1;
                 rule_line.push_str("dport = ");
                 rule_line.push_str(&rule.dport.to_string());
+                rule_line.push_str(" ");
             }
 
             if !rule.appid.is_empty() {
@@ -345,7 +347,7 @@ impl RuleProcessor {
                 terms += 1;
                 rule_line.push_str("ndpi_appid ^@ '");
                 rule_line.push_str(&rule.appid);
-                rule_line.push_str("'");
+                rule_line.push_str("' ");
             }
 
             if !rule.orient.is_empty() {
@@ -355,7 +357,7 @@ impl RuleProcessor {
                 terms += 1;
                 rule_line.push_str("orient ^@ '");
                 rule_line.push_str(&rule.orient);
-                rule_line.push_str("'");
+                rule_line.push_str("' ");
             }
 
             if !rule.tag.is_empty() {
@@ -365,7 +367,7 @@ impl RuleProcessor {
                 terms += 1;
                 rule_line.push_str("list_has_any(tag,['");
                 rule_line.push_str(&rule.tag);
-                rule_line.push_str("'])");
+                rule_line.push_str("']) ");
             }
 
             if rule.risk_severity != 0 {
@@ -375,6 +377,7 @@ impl RuleProcessor {
                 terms += 1;
                 rule_line.push_str("ndpi_risk_severity >= ");
                 rule_line.push_str(&rule.risk_severity.to_string());
+                rule_line.push_str(" ");
             }
 
             if rule.hbos_severity != 0 {
@@ -384,6 +387,7 @@ impl RuleProcessor {
                 terms += 1;
                 rule_line.push_str("hbos_severity >= ");
                 rule_line.push_str(&rule.hbos_severity.to_string());
+                rule_line.push_str(" ");
             }
 
             if terms > 0 {

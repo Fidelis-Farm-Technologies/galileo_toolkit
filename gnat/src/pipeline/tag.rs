@@ -30,26 +30,30 @@ pub const TAG_LIMIT: u8 = 16;
 #[derive(Clone, Serialize, Deserialize)]
 pub struct TagStructure {
     tag: String,
-    #[serde(skip)]
-    observe: Option<String>,
-    #[serde(skip)]
-    proto: Option<String>,
-    #[serde(skip)]
-    saddr: Option<String>,
+    #[serde(default = "default_string")]
+    observe: String,
+    #[serde(default = "default_string")]
+    proto: String,
+    #[serde(default = "default_string")]
+    saddr: String,
     #[serde(default = "zero_port")]
-    sport: Option<u16>,
-    #[serde(skip)]
-    daddr: Option<String>,
+    sport: u16,
+    #[serde(default = "default_string")]
+    daddr: String,
     #[serde(default = "zero_port")]
-    dport: Option<u16>,
-    #[serde(skip)]
-    ndpi_appid: Option<String>,
-    #[serde(skip)]
-    orient: Option<String>,
+    dport: u16,
+    #[serde(default = "default_string")]
+    ndpi_appid: String,
+    #[serde(default = "default_string")]
+    orient: String,
 }
 
-fn zero_port() -> Option<u16> {
-    Some(0)
+fn zero_port() -> u16 {
+    0
+}
+
+fn default_string() -> String {
+    "".to_owned()
 }
 
 pub struct TagProcessor {
@@ -113,51 +117,55 @@ impl TagProcessor {
                 rule.tag,  rule.tag
             );
 
-            if let Some(observe) = rule.observe {
+            if !rule.observe.is_empty() {
                 rule_command.push_str("AND observe ^@ '");
-                rule_command.push_str(&observe);
-                rule_command.push_str("'");
+                rule_command.push_str(&rule.observe);
+                rule_command.push_str("' ");
             }
 
-            if let Some(proto) = rule.proto {
+            if !rule.proto.is_empty() {
                 rule_command.push_str("AND proto = '");
-                rule_command.push_str(&proto);
-                rule_command.push_str("'");
+                rule_command.push_str(&rule.proto);
+                rule_command.push_str("' ");
             }
 
-            if let Some(saddr) = rule.saddr {
+            if !rule.saddr.is_empty() {
                 rule_command.push_str("AND saddr ^@ '");
-                rule_command.push_str(&saddr);
-                rule_command.push_str("'");
+                rule_command.push_str(&rule.saddr);
+                rule_command.push_str("' ");
             }
 
-            if let Some(sport) = rule.sport {
+            if rule.sport != 0 {
                 rule_command.push_str("AND sport = ");
-                rule_command.push_str(&sport.to_string());
+                rule_command.push_str(&rule.sport.to_string());
+                rule_command.push_str(" ");
             }
 
-            if let Some(daddr) = rule.daddr {
+            if !rule.daddr.is_empty() {
                 rule_command.push_str("AND daddr ^@ '");
-                rule_command.push_str(&daddr);
-                rule_command.push_str("'");
+                rule_command.push_str(&rule.daddr);
+                rule_command.push_str("' ");
             }
 
-            if let Some(dport) = rule.dport {
+            if rule.dport != 0 {
                 rule_command.push_str("AND dport = ");
-                rule_command.push_str(&dport.to_string());
+                rule_command.push_str(&rule.dport.to_string());
+                rule_command.push_str(" ");
             }
 
-            if let Some(ndpi_appid) = rule.ndpi_appid {
+            if !rule.ndpi_appid.is_empty() {
                 rule_command.push_str("AND ndpi_appid ^@ '");
-                rule_command.push_str(&ndpi_appid);
-                rule_command.push_str("'");
+                rule_command.push_str(&rule.ndpi_appid);
+                rule_command.push_str("' ");
             }
 
-            if let Some(orient) = rule.orient {
+            if !rule.orient.is_empty() {
                 rule_command.push_str("AND orient ^@ '");
-                rule_command.push_str(&orient);
-                rule_command.push_str("'");
+                rule_command.push_str(&rule.orient);
+                rule_command.push_str("' ");
             }
+
+            //println!("tag rule: {}", rule_command);
 
             tag_rules.push(rule_command);
         }
